@@ -634,6 +634,7 @@ func setupRoutes(
 		// 系统设置 - 终端（执行命令，提高运维效率）
 		protected.POST("/terminal/run", terminalHandler.RunCommand)
 		protected.POST("/terminal/run/stream", terminalHandler.RunCommandStream)
+		protected.GET("/terminal/ws", terminalHandler.RunCommandWS)
 
 		// 外部MCP管理
 		protected.GET("/external-mcp", externalMCPHandler.GetExternalMCPs)

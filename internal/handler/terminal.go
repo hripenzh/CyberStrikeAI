@@ -27,6 +27,19 @@ type TerminalHandler struct {
 	logger *zap.Logger
 }
 
+// maskTerminalCommand 对可能包含敏感信息的终端命令做脱敏，避免在日志中直接记录密码等内容
+func maskTerminalCommand(cmd string) string {
+	trimmed := strings.TrimSpace(cmd)
+	lower := strings.ToLower(trimmed)
+	if strings.Contains(lower, "sudo") || strings.Contains(lower, "password") {
+		return "[masked sensitive terminal command]"
+	}
+	if len(trimmed) > 256 {
+		return trimmed[:256] + "..."
+	}
+	return trimmed
+}
+
 // NewTerminalHandler 创建终端处理器
 func NewTerminalHandler(logger *zap.Logger) *TerminalHandler {
 	return &TerminalHandler{logger: logger}
@@ -146,7 +159,7 @@ func (h *TerminalHandler) RunCommand(c *gin.Context) {
 			c.JSON(http.StatusOK, resp)
 			return
 		}
-		h.logger.Debug("终端命令执行异常", zap.String("command", cmdStr), zap.Error(err))
+		h.logger.Debug("终端命令执行异常", zap.String("command", maskTerminalCommand(cmdStr)), zap.Error(err))
 	}
 
 	// 统一为 \n，避免前端因 \r 出现错位/对角线排版

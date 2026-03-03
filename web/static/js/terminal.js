@@ -15,7 +15,7 @@
     var currentTabId = 1;
     var inited = false;
     var tabIdCounter = 1;
-    var PROMPT = '\x1b[32m$\x1b[0m ';
+    var PROMPT = ''; // 真实 Shell 自己输出提示符，这里不再自定义
     var HISTORY_MAX = 100;
     var CANCEL_AFTER_MS = 125000;
 
@@ -26,20 +26,16 @@
         return terminals[0] || null;
     }
 
-    var WELCOME_LINE = 'CyberStrikeAI 终端 - 直接输入命令，Enter 执行；↑↓ 历史；Ctrl+L 清屏\r\n';
+    var WELCOME_LINE = 'CyberStrikeAI 终端 - 真实 Shell 会话，直接输入命令；Ctrl+L 清屏\r\n';
 
     function writePrompt(tab) {
-        var t = tab || getCurrent();
-        if (t && t.term) t.term.write(PROMPT);
+        // 提示符交由后端 Shell 自行输出，这里仅保留占位函数，避免旧代码报错
     }
 
     function redrawTabDisplay(t) {
         if (!t || !t.term) return;
         t.term.clear();
-        t.lineBuffer = '';
-        if (t.cursorIndex !== undefined) t.cursorIndex = 0;
         t.term.write(WELCOME_LINE);
-        t.term.write(PROMPT);
     }
 
     function writeln(tabOrS, s) {
@@ -65,100 +61,66 @@
         t.term.write(suffix);
     }
 
-    function getAuthHeaders() {
-        var h = new Headers();
-        h.set('Content-Type', 'application/json');
+    // 从本地存储中获取当前登录 token（与 auth.js 使用的结构保持一致）
+    function getStoredAuthToken() {
         try {
-            var auth = localStorage.getItem('cyberstrike-auth');
-            if (auth) {
-                var o = JSON.parse(auth);
-                if (o && o.token) h.set('Authorization', 'Bearer ' + o.token);
-            }
+            var raw = localStorage.getItem('cyberstrike-auth');
+            if (!raw) return null;
+            var o = JSON.parse(raw);
+            if (o && o.token) return o.token;
         } catch (e) {}
-        return h;
+        return null;
     }
 
-    function runCommand(cmd, tab) {
-        var t = tab || getCurrent();
-        if (!t) return;
-        if (t.running) return;
-        runCommandImpl(cmd, t);
+    // WebSocket 地址构造（兼容 http/https，并通过 query 传递 token 以通过后端鉴权）
+    function buildTerminalWSURL() {
+        var proto = (window.location.protocol === 'https:') ? 'wss://' : 'ws://';
+        var url = proto + window.location.host + '/api/terminal/ws';
+        var token = getStoredAuthToken();
+        if (token) {
+            url += '?token=' + encodeURIComponent(token);
+        }
+        return url;
     }
 
-    function runCommandImpl(cmd, t) {
-        t.running = true;
-        t.abortController = new AbortController();
-        var cancelTimer = setTimeout(function () {
-            if (!t.running) return;
-            t.running = false;
-            writeln(t, '\x1b[2m(已取消 可继续输入)\x1b[0m');
-            writePrompt(t);
-        }, CANCEL_AFTER_MS);
+    function ensureTerminalWS(tab) {
+        if (tab.ws && (tab.ws.readyState === WebSocket.OPEN || tab.ws.readyState === WebSocket.CONNECTING)) {
+            return;
+        }
+        try {
+            var ws = new WebSocket(buildTerminalWSURL());
+            tab.ws = ws;
+            tab.running = true;
 
-        var done = function () {
-            clearTimeout(cancelTimer);
-            t.running = false;
-            t.abortController = null;
-            writePrompt(t);
-        };
+            ws.onopen = function () {
+                if (tab.term) {
+                    tab.term.focus();
+                }
+            };
 
-        fetch('/api/terminal/run/stream', {
-            method: 'POST',
-            headers: getAuthHeaders(),
-            body: JSON.stringify({ command: cmd }),
-            signal: t.abortController.signal
-        }).then(function (res) {
-            if (!res.ok) return res.json().then(function (d) { throw new Error(d.error || 'HTTP ' + res.status); });
-            var ct = res.headers.get('Content-Type') || '';
-            if (ct.indexOf('text/event-stream') !== -1 && res.body) {
-                return readSSEStream(res.body, t).then(done).catch(function () { done(); });
-            }
-            return res.json().then(function (data) {
-                if (data.stdout) writeOutput(t, data.stdout, false);
-                if (data.stderr) writeOutput(t, data.stderr, true);
-                done();
-            });
-        }).catch(function (err) {
-            if (err.name === 'AbortError') {
-                writeln(t, '\x1b[2m(已取消)\x1b[0m');
-            } else {
-                writeln(t, '\x1b[31m错误: ' + (err.message || String(err)) + '\x1b[0m');
-            }
-            done();
-        });
-    }
+            ws.onmessage = function (ev) {
+                if (!tab.term) return;
+                tab.term.write(ev.data);
+            };
 
-    function readSSEStream(body, t) {
-        return new Promise(function (resolve, reject) {
-            var reader = body.getReader();
-            var decoder = new TextDecoder();
-            var buf = '';
-            function read() {
-                reader.read().then(function (result) {
-                    if (result.done) { resolve(); return; }
-                    buf += decoder.decode(result.value, { stream: true });
-                    var i;
-                    while ((i = buf.indexOf('\n\n')) !== -1) {
-                        var block = buf.slice(0, i);
-                        buf = buf.slice(i + 2);
-                        var dataLine = block.match(/data:\s*(.+)/);
-                        if (dataLine) {
-                            try {
-                                var ev = JSON.parse(dataLine[1]);
-                                if (ev.t === 'out' && ev.d !== undefined) t.term.writeln(ev.d);
-                                else if (ev.t === 'err' && ev.d !== undefined) t.term.write('\x1b[31m' + ev.d + '\x1b[0m\n');
-                                else if (ev.t === 'exit') {
-                                    resolve();
-                                    return;
-                                }
-                            } catch (e) {}
-                        }
-                    }
-                    read();
-                }).catch(reject);
+            ws.onclose = function () {
+                tab.running = false;
+                if (tab.term) {
+                    tab.term.writeln('\r\n\x1b[2m[会话已关闭]\x1b[0m');
+                }
+            };
+
+            ws.onerror = function () {
+                tab.running = false;
+                if (tab.term) {
+                    tab.term.writeln('\r\n\x1b[31m[终端连接出错]\x1b[0m');
+                }
+            };
+        } catch (e) {
+            if (tab.term) {
+                tab.term.writeln('\r\n\x1b[31m[无法连接终端服务: ' + String(e) + ']\x1b[0m');
             }
-            read();
-        });
+        }
     }
 
     function createTerminalInContainer(container, tab) {
@@ -206,7 +168,6 @@
         }
         term.open(container);
         term.write(WELCOME_LINE);
-        term.write(PROMPT);
         container.addEventListener('click', function () {
             switchTerminalTab(tab.id);
             if (term) term.focus();
@@ -214,105 +175,23 @@
         container.setAttribute('tabindex', '0');
         container.title = '点击此处后输入命令';
 
-        function redrawLine(t) {
-            if (!t || !t.term) return;
-            var n = t.lineBuffer.length - t.cursorIndex;
-            t.term.write('\r\x1b[K' + PROMPT + t.lineBuffer);
-            if (n > 0) t.term.write('\x1b[' + n + 'D');
+        function sendToWS(data) {
+            ensureTerminalWS(tab);
+            if (tab.ws && tab.ws.readyState === WebSocket.OPEN) {
+                try {
+                    tab.ws.send(data);
+                } catch (e) {}
+            }
         }
 
         term.onData(function (data) {
+            // Ctrl+L：本地清屏，同时把 ^L 也发给后端
             if (data === '\x0c') {
                 term.clear();
-                tab.lineBuffer = '';
-                tab.cursorIndex = 0;
-                writePrompt(tab);
+                sendToWS(data);
                 return;
             }
-            if (data === '\x1b[A') {
-                if (tab.history.length === 0) return;
-                if (tab.historyIndex < 0) tab.historyIndex = tab.history.length;
-                tab.historyIndex--;
-                if (tab.historyIndex < 0) tab.historyIndex = 0;
-                tab.lineBuffer = tab.history[tab.historyIndex];
-                tab.cursorIndex = tab.lineBuffer.length;
-                term.write('\r\x1b[K' + PROMPT + tab.lineBuffer);
-                return;
-            }
-            if (data === '\x1b[B') {
-                if (tab.history.length === 0) return;
-                tab.historyIndex++;
-                if (tab.historyIndex >= tab.history.length) {
-                    tab.historyIndex = -1;
-                    tab.lineBuffer = '';
-                    tab.cursorIndex = 0;
-                    term.write('\r\x1b[K' + PROMPT);
-                } else {
-                    tab.lineBuffer = tab.history[tab.historyIndex];
-                    tab.cursorIndex = tab.lineBuffer.length;
-                    term.write('\r\x1b[K' + PROMPT + tab.lineBuffer);
-                }
-                return;
-            }
-            if (data === '\x1b[D') {
-                if (tab.cursorIndex > 0) {
-                    tab.cursorIndex--;
-                    term.write('\x1b[D');
-                }
-                return;
-            }
-            if (data === '\x1b[C') {
-                if (tab.cursorIndex < tab.lineBuffer.length) {
-                    tab.cursorIndex++;
-                    term.write('\x1b[C');
-                }
-                return;
-            }
-            var code = data.charCodeAt(0);
-            if (code === 13 || code === 10) {
-                var cmd = tab.lineBuffer.trim();
-                tab.lineBuffer = '';
-                tab.cursorIndex = 0;
-                tab.historyIndex = -1;
-                term.writeln('');
-                if (cmd) {
-                    if (tab.history.indexOf(cmd) === -1) {
-                        tab.history.push(cmd);
-                        if (tab.history.length > HISTORY_MAX) tab.history.shift();
-                    }
-                    runCommand(cmd, tab);
-                } else {
-                    writePrompt(tab);
-                }
-                return;
-            }
-            if (code === 127) {
-                if (tab.cursorIndex > 0) {
-                    tab.lineBuffer = tab.lineBuffer.slice(0, tab.cursorIndex - 1) + tab.lineBuffer.slice(tab.cursorIndex);
-                    tab.cursorIndex--;
-                    redrawLine(tab);
-                }
-                return;
-            }
-            if (code === 3) {
-                if (tab.running && tab.abortController) {
-                    tab.abortController.abort();
-                }
-                tab.lineBuffer = '';
-                tab.cursorIndex = 0;
-                term.writeln('^C');
-                writePrompt(tab);
-                return;
-            }
-            if (data.length === 1 && code >= 32) {
-                tab.lineBuffer = tab.lineBuffer.slice(0, tab.cursorIndex) + data + tab.lineBuffer.slice(tab.cursorIndex);
-                tab.cursorIndex++;
-                redrawLine(tab);
-                return;
-            }
-            tab.lineBuffer += data;
-            tab.cursorIndex = tab.lineBuffer.length;
-            term.write(data);
+            sendToWS(data);
         });
 
         tab.term = term;

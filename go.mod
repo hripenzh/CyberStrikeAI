@@ -8,6 +8,7 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/gin-gonic/gin v1.9.1
 	github.com/google/uuid v1.5.0
+	github.com/gorilla/websocket v1.5.0
 	github.com/larksuite/oapi-sdk-go/v3 v3.4.22
 	github.com/mattn/go-sqlite3 v1.14.18
 	github.com/modelcontextprotocol/go-sdk v1.2.0
@@ -29,7 +30,6 @@ require (
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/google/jsonschema-go v0.3.0 // indirect
-	github.com/gorilla/websocket v1.5.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.4 // indirect
 	github.com/leodido/go-urn v1.2.4 // indirect
