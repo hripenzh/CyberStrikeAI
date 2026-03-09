@@ -1188,7 +1188,8 @@ function addMessage(role, content, mcpExecutionIds = null, progressId = null, cr
     } else {
         messageTime = new Date();
     }
-    timeDiv.textContent = messageTime.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    const msgTimeLocale = (typeof window.__locale === 'string' && window.__locale.startsWith('zh')) ? 'zh-CN' : 'en-US';
+    timeDiv.textContent = messageTime.toLocaleTimeString(msgTimeLocale, { hour: '2-digit', minute: '2-digit' });
     contentWrapper.appendChild(timeDiv);
     
     // 如果有MCP执行ID或进度ID，添加查看详情区域（统一使用"渗透测试详情"样式）
@@ -1433,6 +1434,8 @@ function renderProcessDetails(messageId, processDetails) {
             itemTitle = '❌ ' + (typeof window.t === 'function' ? window.t('chat.error') : '错误');
         } else if (eventType === 'cancelled') {
             itemTitle = '⛔ ' + (typeof window.t === 'function' ? window.t('chat.taskCancelled') : '任务已取消');
+        } else if (eventType === 'progress') {
+            itemTitle = typeof window.translateProgressMessage === 'function' ? window.translateProgressMessage(detail.message || '') : (detail.message || '');
         }
         
         addTimelineItem(timeline, eventType, {
@@ -1533,8 +1536,9 @@ async function showMCPDetail(executionId) {
             const normalizedStatus = (exec.status || 'unknown').toLowerCase();
             statusEl.textContent = getStatusText(exec.status);
             statusEl.className = `status-chip status-${normalizedStatus}`;
+            const detailTimeLocale = (typeof window.__locale === 'string' && window.__locale.startsWith('zh')) ? 'zh-CN' : 'en-US';
             document.getElementById('detail-time').textContent = exec.startTime
-                ? new Date(exec.startTime).toLocaleString('zh-CN')
+                ? new Date(exec.startTime).toLocaleString(detailTimeLocale)
                 : '—';
             
             // 请求参数
@@ -1950,28 +1954,30 @@ function formatConversationTimestamp(dateObj, todayStart, yesterdayStart) {
     const referenceToday = todayStart || new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const referenceYesterday = yesterdayStart || new Date(referenceToday.getTime() - 24 * 60 * 60 * 1000);
     const messageDate = new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate());
+    const fmtLocale = (typeof window.__locale === 'string' && window.__locale.startsWith('zh')) ? 'zh-CN' : 'en-US';
+    const yesterdayLabel = typeof window.t === 'function' ? window.t('chat.yesterday') : '昨天';
 
     if (messageDate.getTime() === referenceToday.getTime()) {
-        return dateObj.toLocaleTimeString('zh-CN', {
+        return dateObj.toLocaleTimeString(fmtLocale, {
             hour: '2-digit',
             minute: '2-digit'
         });
     }
     if (messageDate.getTime() === referenceYesterday.getTime()) {
-        return '昨天 ' + dateObj.toLocaleTimeString('zh-CN', {
+        return yesterdayLabel + ' ' + dateObj.toLocaleTimeString(fmtLocale, {
             hour: '2-digit',
             minute: '2-digit'
         });
     }
     if (dateObj.getFullYear() === referenceToday.getFullYear()) {
-        return dateObj.toLocaleString('zh-CN', {
+        return dateObj.toLocaleString(fmtLocale, {
             month: 'short',
             day: 'numeric',
             hour: '2-digit',
             minute: '2-digit'
         });
     }
-    return dateObj.toLocaleString('zh-CN', {
+    return dateObj.toLocaleString(fmtLocale, {
         year: 'numeric',
         month: 'short',
         day: 'numeric',
@@ -5663,7 +5669,8 @@ async function loadGroupConversations(groupId, searchQuery = '') {
                 const timeWrapper = document.createElement('div');
                 timeWrapper.className = 'group-conversation-time';
                 const dateObj = fullConv.updatedAt ? new Date(fullConv.updatedAt) : new Date();
-                timeWrapper.textContent = dateObj.toLocaleString('zh-CN', {
+                const convListLocale = (typeof window.__locale === 'string' && window.__locale.startsWith('zh')) ? 'zh-CN' : 'en-US';
+                timeWrapper.textContent = dateObj.toLocaleString(convListLocale, {
                     year: 'numeric',
                     month: 'long',
                     day: 'numeric',

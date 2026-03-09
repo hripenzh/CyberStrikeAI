@@ -23,6 +23,9 @@ function translateProgressMessage(message) {
     }
     return message;
 }
+if (typeof window !== 'undefined') {
+    window.translateProgressMessage = translateProgressMessage;
+}
 
 // 存储工具调用ID到DOM元素的映射，用于更新执行状态
 const toolCallStatusMap = new Map();
@@ -101,7 +104,7 @@ async function requestCancel(conversationId) {
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) {
-        throw new Error(result.error || '取消失败');
+        throw new Error(result.error || (typeof window.t === 'function' ? window.t('tasks.cancelFailed') : '取消失败'));
     }
     return result;
 }
@@ -186,7 +189,7 @@ function collapseAllProgressDetails(assistantMessageId, progressId) {
         if (timeline) {
             timeline.classList.remove('expanded');
             if (toggleBtn) {
-                toggleBtn.textContent = '展开详情';
+                toggleBtn.textContent = typeof window.t === 'function' ? window.t('chat.expandDetail') : '展开详情';
             }
         }
     });
@@ -198,7 +201,7 @@ function collapseAllProgressDetails(assistantMessageId, progressId) {
         if (progressTimeline) {
             progressTimeline.classList.remove('expanded');
             if (progressToggleBtn) {
-                progressToggleBtn.textContent = '展开详情';
+                progressToggleBtn.textContent = typeof window.t === 'function' ? window.t('chat.expandDetail') : '展开详情';
             }
         }
     }
@@ -347,7 +350,7 @@ async function cancelProgressTask(progressId) {
                 stopBtn.disabled = false;
             }, 1500);
         }
-        alert('任务信息尚未同步，请稍后再试。');
+        alert(typeof window.t === 'function' ? window.t('tasks.taskInfoNotSynced') : '任务信息尚未同步，请稍后再试。');
         return;
     }
 
@@ -358,7 +361,7 @@ async function cancelProgressTask(progressId) {
     markProgressCancelling(progressId);
     if (stopBtn) {
         stopBtn.disabled = true;
-        stopBtn.textContent = '取消中...';
+        stopBtn.textContent = typeof window.t === 'function' ? window.t('tasks.cancelling') : '取消中...';
     }
 
     try {
@@ -686,7 +689,7 @@ function handleStreamEvent(event, progressElement, progressId,
         case 'error':
             // 显示错误
             addTimelineItem(timeline, 'error', {
-                title: '❌ 错误',
+                title: '❌ ' + (typeof window.t === 'function' ? window.t('chat.error') : '错误'),
                 message: event.message,
                 data: event.data
             });
@@ -694,7 +697,7 @@ function handleStreamEvent(event, progressElement, progressId,
             // 更新进度标题为错误状态
             const errorTitle = document.querySelector(`#${progressId} .progress-title`);
             if (errorTitle) {
-                errorTitle.textContent = '❌ 执行失败';
+                errorTitle.textContent = '❌ ' + (typeof window.t === 'function' ? window.t('chat.executionFailed') : '执行失败');
             }
             
             // 更新进度容器为已完成状态（添加completed类）
@@ -759,7 +762,7 @@ function handleStreamEvent(event, progressElement, progressId,
             // 完成，更新进度标题（如果进度消息还存在）
             const doneTitle = document.querySelector(`#${progressId} .progress-title`);
             if (doneTitle) {
-                doneTitle.textContent = '✅ 渗透测试完成';
+                doneTitle.textContent = '✅ ' + (typeof window.t === 'function' ? window.t('chat.penetrationTestComplete') : '渗透测试完成');
             }
             // 更新对话ID
             if (event.data && event.data.conversationId) {
@@ -872,7 +875,8 @@ function addTimelineItem(timeline, type, options) {
         eventTime = new Date();
     }
     
-    const time = eventTime.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const timeLocale = (typeof window.__locale === 'string' && window.__locale.startsWith('zh')) ? 'zh-CN' : 'en-US';
+    const time = eventTime.toLocaleTimeString(timeLocale, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     
     let content = `
         <div class="timeline-item-header">
@@ -945,7 +949,7 @@ async function loadActiveTasks(showErrors = false) {
         const result = await response.json().catch(() => ({}));
 
         if (!response.ok) {
-            throw new Error(result.error || '获取活跃任务失败');
+            throw new Error(result.error || (typeof window.t === 'function' ? window.t('tasks.loadActiveTasksFailed') : '获取活跃任务失败'));
         }
 
         renderActiveTasks(result.tasks || []);
@@ -953,7 +957,8 @@ async function loadActiveTasks(showErrors = false) {
         console.error('获取活跃任务失败:', error);
         if (showErrors && bar) {
             bar.style.display = 'block';
-            bar.innerHTML = `<div class="active-task-error">无法获取任务状态：${escapeHtml(error.message)}</div>`;
+            const cannotGetStatus = typeof window.t === 'function' ? window.t('tasks.cannotGetTaskStatus') : '无法获取任务状态：';
+            bar.innerHTML = `<div class="active-task-error">${escapeHtml(cannotGetStatus)}${escapeHtml(error.message)}</div>`;
         }
     }
 }
@@ -982,8 +987,9 @@ function renderActiveTasks(tasks) {
         item.className = 'active-task-item';
 
         const startedTime = task.startedAt ? new Date(task.startedAt) : null;
+        const taskTimeLocale = (typeof window.__locale === 'string' && window.__locale.startsWith('zh')) ? 'zh-CN' : 'en-US';
         const timeText = startedTime && !isNaN(startedTime.getTime())
-            ? startedTime.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+            ? startedTime.toLocaleTimeString(taskTimeLocale, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
             : '';
 
         const _t = function (k) { return typeof window.t === 'function' ? window.t(k) : k; };

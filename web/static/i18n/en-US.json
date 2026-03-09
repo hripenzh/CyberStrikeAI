@@ -158,7 +158,10 @@
     "searching": "Searching...",
     "loadFailedRetry": "Load failed, please retry",
     "dataFormatError": "Data format error",
-    "progressInProgress": "Penetration test in progress..."
+    "progressInProgress": "Penetration test in progress...",
+    "executionFailed": "Execution failed",
+    "penetrationTestComplete": "Penetration test complete",
+    "yesterday": "Yesterday"
   },
   "progress": {
     "callingAI": "Calling AI model...",
@@ -200,6 +203,10 @@
     "unknownTime": "Unknown time",
     "clearHistoryConfirm": "Clear all task history?",
     "cancelTaskFailed": "Cancel task failed",
+    "cancelFailed": "Cancel failed",
+    "taskInfoNotSynced": "Task info not synced yet, please try again later.",
+    "loadActiveTasksFailed": "Failed to load active tasks",
+    "cannotGetTaskStatus": "Cannot get task status",
     "copiedToast": "Copied!",
     "cancelling": "Cancelling...",
     "enterTaskPrompt": "Enter at least one task",

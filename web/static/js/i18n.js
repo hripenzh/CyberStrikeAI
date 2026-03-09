@@ -149,6 +149,9 @@
         applyTranslations(document);
         updateLangLabel();
         try {
+            window.__locale = lang;
+        } catch (e) { /* ignore */ }
+        try {
             document.dispatchEvent(new CustomEvent('languagechange', { detail: { lang: lang } }));
         } catch (e) { /* ignore */ }
     }
@@ -170,6 +173,9 @@
         await loadLanguageResources(initialLang);
         applyTranslations(document);
         updateLangLabel();
+        try {
+            window.__locale = i18next.language || initialLang;
+        } catch (e) { /* ignore */ }
 
         // 导出全局函数供其他脚本调用（支持插值参数，如 _t('key', { count: 2 })）
         window.t = function (key, opts) {
