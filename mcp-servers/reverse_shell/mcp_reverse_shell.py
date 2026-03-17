@@ -11,6 +11,7 @@ Reverse Shell MCP Server - 反向 Shell MCP 服务
 
 from __future__ import annotations
 
+import asyncio
 import socket
 import threading
 import time
@@ -253,9 +254,10 @@ def reverse_shell_status() -> str:
 @app.tool(
     description="向已连接的反向 Shell 客户端发送一条命令并返回输出。若无连接请先 start_listener 并等待目标连接。",
 )
-def reverse_shell_send_command(command: str) -> str:
+async def reverse_shell_send_command(command: str) -> str:
     """Send a command to the connected reverse shell client and return output."""
-    return _send_command_blocking(command)
+    # 在线程池中执行阻塞的 socket I/O，避免长时间占用 MCP 主线程，使 status/stop_listener 等仍可响应
+    return await asyncio.to_thread(_send_command_blocking, command)
 
 
 @app.tool(
