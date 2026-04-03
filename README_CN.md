@@ -15,6 +15,17 @@
 
 </details>
 
+<details>
+<summary><strong>赞助</strong>（微信支付与支付宝 — 点击展开二维码）</summary>
+
+若 CyberStrikeAI 对您有帮助，可通过 **微信支付** 或 **支付宝** 赞助项目：
+
+<div align="center">
+  <img src="./images/sponsor-wechat-alipay-qr.jpg" alt="微信与支付宝赞助二维码" width="480">
+</div>
+
+</details>
+
 CyberStrikeAI 是一款 **AI 原生安全测试平台**，基于 Go 构建，集成了 100+ 安全工具、智能编排引擎、角色化测试与预设安全测试角色、Skills 技能系统与专业测试技能，以及完整的测试生命周期管理能力。通过原生 MCP 协议与 AI 智能体，支持从对话指令到漏洞发现、攻击链分析、知识检索与结果可视化的全流程自动化，为安全团队提供可审计、可追溯、可协作的专业测试环境。
 
 

@@ -16,6 +16,17 @@
 
 </details>
 
+<details>
+<summary><strong>Sponsorship</strong> (WeChat Pay & Alipay — click to reveal QR codes)</summary>
+
+If CyberStrikeAI helps you, you can support the project via **WeChat Pay** or **Alipay**:
+
+<div align="center">
+  <img src="./images/sponsor-wechat-alipay-qr.jpg" alt="WeChat Pay and Alipay sponsorship QR codes" width="480">
+</div>
+
+</details>
+
 CyberStrikeAI is an **AI-native security testing platform** built in Go. It integrates 100+ security tools, an intelligent orchestration engine, role-based testing with predefined security roles, a skills system with specialized testing skills, and comprehensive lifecycle management capabilities. Through native MCP protocol and AI agents, it enables end-to-end automation from conversational commands to vulnerability discovery, attack-chain analysis, knowledge retrieval, and result visualization—delivering an auditable, traceable, and collaborative testing environment for security teams.
 
 
