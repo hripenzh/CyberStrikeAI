@@ -74,6 +74,17 @@ if (typeof window !== 'undefined') {
 // 存储工具调用ID到DOM元素的映射，用于更新执行状态
 const toolCallStatusMap = new Map();
 
+function finalizeOutstandingToolCallsForProgress(progressId, finalStatus) {
+    if (!progressId) return;
+    const pid = String(progressId);
+    for (const [toolCallId, mapping] of Array.from(toolCallStatusMap.entries())) {
+        if (!mapping) continue;
+        if (mapping.progressId != null && String(mapping.progressId) !== pid) continue;
+        updateToolCallStatus(toolCallId, finalStatus);
+        toolCallStatusMap.delete(toolCallId);
+    }
+}
+
 // 模型流式输出缓存：progressId -> { assistantId, buffer }
 const responseStreamStateByProgressId = new Map();
 
@@ -387,6 +398,11 @@ function getAssistantId() {
 function integrateProgressToMCPSection(progressId, assistantMessageId, mcpExecutionIds) {
     const progressElement = document.getElementById(progressId);
     if (!progressElement) return;
+
+    // Ensure any "running" tool_call badges are closed before we snapshot timeline HTML.
+    // Otherwise, once the progress element is removed, later 'done' events may not be able
+    // to update the original timeline DOM and the copied HTML would stay "执行中".
+    finalizeOutstandingToolCallsForProgress(progressId, 'failed');
 
     const mcpIds = Array.isArray(mcpExecutionIds) ? mcpExecutionIds : [];
     
@@ -937,6 +953,9 @@ function handleStreamEvent(event, progressElement, progressId,
                 message: event.message || '',
                 data: event.data
             });
+            // If the backend triggers a recovery run, any "running" tool_call items in this progress
+            // should be closed to avoid being stuck forever.
+            finalizeOutstandingToolCallsForProgress(progressId, 'failed');
             break;
         }
 
@@ -958,7 +977,8 @@ function handleStreamEvent(event, progressElement, progressId,
             if (toolCallId && toolCallItemId) {
                 toolCallStatusMap.set(toolCallId, {
                     itemId: toolCallItemId,
-                    timeline: timeline
+                    timeline: timeline,
+                    progressId: progressId
                 });
                 
                 // 添加执行中状态指示器
@@ -1224,6 +1244,8 @@ function handleStreamEvent(event, progressElement, progressId,
             
             // 立即刷新任务状态
             loadActiveTasks();
+            // Close any remaining running tool calls for this progress.
+            finalizeOutstandingToolCallsForProgress(progressId, 'failed');
             break;
             
         case 'response_start': {
@@ -1337,8 +1359,22 @@ function handleStreamEvent(event, progressElement, progressId,
                 updateAssistantBubbleContent(assistantIdFinal, event.message, true);
             }
 
+            // 移除 response_start/response_delta 阶段创建的「规划中」占位条目。
+            // 该条目属于 UI-only 的流式展示，不应被拷贝到最终的过程详情里；
+            // 否则会出现“不刷新页面仍显示规划中，刷新后消失”的不一致。
+            if (streamState && streamState.itemId) {
+                const planningItem = document.getElementById(streamState.itemId);
+                if (planningItem && planningItem.parentNode) {
+                    planningItem.parentNode.removeChild(planningItem);
+                }
+            }
+
             // 最终回复时隐藏进度卡片（多代理模式下，迭代过程已完整展示）
             hideProgressMessageForFinalReply(progressId);
+
+            // Before integrating/removing the progress DOM, close any outstanding running tool calls
+            // so the copied timeline HTML reflects the final status.
+            finalizeOutstandingToolCallsForProgress(progressId, 'failed');
 
             // 将进度详情集成到工具调用区域（放在最终 response 之后，保证时间线已完整）
             integrateProgressToMCPSection(progressId, assistantIdFinal, mcpIds);
@@ -1403,6 +1439,8 @@ function handleStreamEvent(event, progressElement, progressId,
             
             // 立即刷新任务状态（执行失败时任务状态会更新）
             loadActiveTasks();
+            // Close any remaining running tool calls for this progress.
+            finalizeOutstandingToolCallsForProgress(progressId, 'failed');
             break;
             
         case 'done':
@@ -1438,6 +1476,8 @@ function handleStreamEvent(event, progressElement, progressId,
             
             // 立即刷新任务状态（确保任务状态同步）
             loadActiveTasks();
+            // Close any remaining running tool calls for this progress (best-effort).
+            finalizeOutstandingToolCallsForProgress(progressId, 'failed');
             
             // 延迟再次刷新任务状态（确保后端已完成状态更新）
             setTimeout(() => {
