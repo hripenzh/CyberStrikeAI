@@ -1255,6 +1255,9 @@ func updateOpenAIConfig(doc *yaml.Node, cfg config.OpenAIConfig) {
 	setStringInMap(openaiNode, "api_key", cfg.APIKey)
 	setStringInMap(openaiNode, "base_url", cfg.BaseURL)
 	setStringInMap(openaiNode, "model", cfg.Model)
+	if cfg.MaxTotalTokens > 0 {
+		setIntInMap(openaiNode, "max_total_tokens", cfg.MaxTotalTokens)
+	}
 }
 
 func updateFOFAConfig(doc *yaml.Node, cfg config.FofaConfig) {
