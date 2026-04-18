@@ -110,7 +110,7 @@ CyberStrikeAI 是一款 **AI 原生安全测试平台**，基于 Go 构建，集
 - 📄 大结果分页、压缩与全文检索
 - 🔗 攻击链可视化、风险打分与步骤回放
 - 🔒 Web 登录保护、审计日志、SQLite 持久化
-- 📚 知识库功能：向量检索与混合搜索，为 AI 提供安全专业知识
+- 📚 知识库功能：向量检索（与 Eino Retriever 语义一致），为 AI 提供安全专业知识
 - 📁 对话分组管理：支持分组创建、置顶、重命名、删除等操作
 - 🛡️ 漏洞管理功能：完整的漏洞 CRUD 操作，支持严重程度分级、状态流转、按对话/严重程度/状态过滤，以及统计看板
 - 📋 批量任务管理：创建任务队列，批量添加任务，依次顺序执行，支持任务编辑与状态跟踪
@@ -248,7 +248,7 @@ go build -o cyberstrike-ai cmd/server/main.go
 - **预设角色**：系统内置 12+ 个预设的安全测试角色（渗透测试、CTF、Web 应用扫描、API 安全测试、二进制分析、云安全审计等），位于 `roles/` 目录。
 - **自定义提示词**：每个角色可定义 `user_prompt`，会在用户消息前自动添加，引导 AI 采用特定的测试方法和关注重点。
 - **工具限制**：角色可指定 `tools` 列表，限制可用工具，实现聚焦的测试流程（如 CTF 角色限制为 CTF 专用工具）。
-- **Skills 集成**：角色可附加安全测试技能。技能名称会作为提示添加到系统提示词中，AI 智能体可通过 `read_skill` 工具按需获取技能内容。
+- **Skills 集成**：角色可附加安全测试技能。技能 id 会作为提示写入系统提示词；**多代理（DeepAgent）** 会话中由 Eino ADK **`skill`** 工具按需加载包内正文与资源（单代理不含该工具链）。
 - **轻松创建角色**：通过在 `roles/` 目录添加 YAML 文件即可创建自定义角色。每个角色定义 `name`、`description`、`user_prompt`、`icon`、`tools`、`skills`、`enabled` 字段。
 - **Web 界面集成**：在聊天界面通过下拉菜单选择角色。角色选择会影响 AI 行为和可用工具建议。
 
@@ -264,8 +264,7 @@ go build -o cyberstrike-ai cmd/server/main.go
      - arjun
      - graphql-scanner
    skills:
-     - api-security-testing
-     - sql-injection-testing
+     - cyberstrike-eino-demo
    enabled: true
    ```
 2. 重启服务或重新加载配置，角色会出现在角色选择下拉菜单中。
@@ -279,17 +278,16 @@ go build -o cyberstrike-ai cmd/server/main.go
 - **配置项**：`config.yaml` 中 `multi_agent`：`enabled`、`default_mode`（`single` | `multi`）、`robot_use_multi_agent`、`batch_use_multi_agent`、`max_iteration`、`orchestrator_instruction` 等；可选在 YAML 写 `sub_agents` 与目录合并（同 `id` 时以 Markdown 为准）。
 - **更多细节**：流式事件、机器人与批量任务、排障等见 **[docs/MULTI_AGENT_EINO.md](docs/MULTI_AGENT_EINO.md)**。
 
-### Skills 技能系统
-- **预设技能**：系统内置 20+ 个预设的安全测试技能（SQL 注入、XSS、API 安全、云安全、容器安全等），位于 `skills/` 目录。
-- **提示词中的技能提示**：当选择某个角色时，该角色附加的技能名称会作为推荐添加到系统提示词中。技能内容不会自动注入，AI 智能体需要时需使用 `read_skill` 工具获取技能详情。
-- **按需调用**：AI 智能体也可以通过内置工具（`list_skills`、`read_skill`）按需访问技能，允许在执行任务过程中动态获取相关技能。
-- **结构化格式**：每个技能是一个目录，包含一个 `SKILL.md` 文件，详细描述测试方法、工具使用、最佳实践和示例。技能支持 YAML front matter 格式用于元数据。
-- **自定义技能**：通过在 `skills/` 目录添加目录即可创建自定义技能。每个技能目录应包含一个 `SKILL.md` 文件。
+### Skills 技能系统（Agent Skills + Eino）
+- **目录规范**：与 [Agent Skills](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview) 一致，**仅**需目录下的 **`SKILL.md`**：YAML 头只用官方的 **`name` 与 `description`**，正文为 Markdown。可选同目录其他文件（`FORMS.md`、`REFERENCE.md`、`scripts/*` 等）。**不使用 `SKILL.yaml`**（Claude / Eino 官方均无此文件）；章节、`scripts/` 列表、渐进式行为由运行时从正文与磁盘 **自动推导**。
+- **Eino**：技能包会被切成 `schema.Document`，供 `FilesystemSkillsRetriever`（`skills.AsEinoRetriever()`）在编排中使用。
+- **提示词**：角色绑定的技能 **id**（文件夹名）会作为推荐写入系统提示；正文默认不整包注入。
+- **HTTP 管理**：`/api/skills` 列表与 `depth=summary|full`、`section`、`resource_path` 等查询仍用于 Web 与运维；**模型侧**加载技能走多代理内置 **`skill`** 工具，而非 MCP。
+- **自带示例**：`skills/cyberstrike-eino-demo/`；说明见 `skills/README.md`。
 
-**创建自定义技能：**
-1. 在 `skills/` 目录创建目录（如 `skills/my-skill/`）
-2. 在该目录下创建 `SKILL.md` 文件，编写技能内容
-3. 在角色的 YAML 文件中，通过添加 `skills` 字段将该技能附加到角色
+**新建技能：**
+1. 在 `skills/` 下创建 `<skill-id>/`，放入标准 `SKILL.md`（及任意可选文件），或直接解压开源技能包到该目录。
+2. 在 `roles/*.yaml` 的 `skills` 列表中引用该 `<skill-id>`。
 
 ### 工具编排与扩展
 - `tools/*.yaml` 定义命令、参数、提示词与元数据，可热加载。
@@ -431,7 +429,7 @@ CyberStrikeAI 支持通过三种传输模式连接外部 MCP 服务器：
 
 ### 知识库功能
 - **向量检索**：AI 智能体在对话过程中可自动调用 `search_knowledge_base` 工具搜索知识库中的安全知识。
-- **混合检索**：结合向量相似度搜索与关键词匹配，提升检索准确性。
+- **向量检索**：基于嵌入余弦相似度与相似度阈值过滤（与 Eino `retriever.Retriever` 语义一致）。
 - **自动索引**：扫描 `knowledge_base/` 目录下的 Markdown 文件，自动构建向量嵌入索引。
 - **Web 管理**：通过 Web 界面创建、更新、删除知识项，支持分类管理。
 - **检索日志**：记录所有知识检索操作，便于审计与调试。
@@ -455,7 +453,6 @@ CyberStrikeAI 支持通过三种传输模式连接外部 MCP 服务器：
      retrieval:
        top_k: 5
        similarity_threshold: 0.7
-       hybrid_weight: 0.7
    ```
 2. **添加知识文件**：将 Markdown 文件放入 `knowledge_base/` 目录，按分类组织（如 `knowledge_base/SQL注入/README.md`）。
 3. **扫描索引**：在 Web 界面中点击"扫描知识库"，系统会自动导入文件并构建向量索引。
@@ -514,8 +511,7 @@ knowledge:
     api_key: ""  # 留空则使用 OpenAI 配置的 api_key
   retrieval:
     top_k: 5  # 检索返回的 Top-K 结果数量
-    similarity_threshold: 0.7  # 相似度阈值（0-1），低于此值的结果将被过滤
-    hybrid_weight: 0.7  # 混合检索权重（0-1），向量检索的权重，1.0 表示纯向量检索，0.0 表示纯关键词检索
+    similarity_threshold: 0.7  # 余弦相似度阈值（0-1），低于此值的结果将被过滤
 roles_dir: "roles"  # 角色配置文件目录（相对于配置文件所在目录）
 skills_dir: "skills"  # Skills 目录（相对于配置文件所在目录）
 agents_dir: "agents"  # 多代理 Markdown（主代理 orchestrator.md + 子代理 *.md）
@@ -581,7 +577,7 @@ CyberStrikeAI/
 ├── web/                 # 前端静态资源与模板
 ├── tools/               # YAML 工具目录（含 100+ 示例）
 ├── roles/               # 角色配置文件目录（含 12+ 预设安全测试角色）
-├── skills/              # Skills 目录（含 20+ 预设安全测试技能）
+├── skills/              # Agent Skills 目录（SKILL.md + 可选文件；示例 cyberstrike-eino-demo）
 ├── agents/              # 多代理 Markdown（orchestrator.md + 子代理 *.md）
 ├── docs/                # 说明文档（如机器人使用说明、MULTI_AGENT_EINO.md）
 ├── images/              # 文档配图

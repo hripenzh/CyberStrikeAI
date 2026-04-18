@@ -111,7 +111,7 @@ CyberStrikeAI is an **AI-native security testing platform** built in Go. It inte
 - 📄 Large-result pagination, compression, and searchable archives
 - 🔗 Attack-chain graph, risk scoring, and step-by-step replay
 - 🔒 Password-protected web UI, audit logs, and SQLite persistence
-- 📚 Knowledge base with vector search and hybrid retrieval for security expertise
+- 📚 Knowledge base with embedding-based vector retrieval (cosine similarity) for security expertise
 - 📁 Conversation grouping with pinning, rename, and batch management
 - 🛡️ Vulnerability management with CRUD operations, severity tracking, status workflow, and statistics
 - 📋 Batch task management: create task queues, add multiple tasks, and execute them sequentially
@@ -250,7 +250,7 @@ Requirements / tips:
 - **Predefined roles** – System includes 12+ predefined security testing roles (Penetration Testing, CTF, Web App Scanning, API Security Testing, Binary Analysis, Cloud Security Audit, etc.) in the `roles/` directory.
 - **Custom prompts** – Each role can define a `user_prompt` that prepends to user messages, guiding the AI to adopt specialized testing methodologies and focus areas.
 - **Tool restrictions** – Roles can specify a `tools` list to limit available tools, ensuring focused testing workflows (e.g., CTF role restricts to CTF-specific utilities).
-- **Skills integration** – Roles can attach security testing skills. Skill names are added to system prompts as hints, and AI agents can access skill content on-demand using the `read_skill` tool.
+- **Skills integration** – Roles can attach security testing skills. Skill ids are hinted in the system prompt; in **multi-agent (DeepAgent)** sessions the Eino ADK **`skill`** tool loads package content on demand (the single-agent path has no skill middleware yet).
 - **Easy role creation** – Create custom roles by adding YAML files to the `roles/` directory. Each role defines `name`, `description`, `user_prompt`, `icon`, `tools`, `skills`, and `enabled` fields.
 - **Web UI integration** – Select roles from a dropdown in the chat interface. Role selection affects both AI behavior and available tool suggestions.
 
@@ -266,8 +266,7 @@ Requirements / tips:
      - arjun
      - graphql-scanner
    skills:
-     - api-security-testing
-     - sql-injection-testing
+     - cyberstrike-eino-demo
    enabled: true
    ```
 2. Restart the server or reload configuration; the role appears in the role selector dropdown.
@@ -281,17 +280,16 @@ Requirements / tips:
 - **Config** – `multi_agent` block in `config.yaml`: `enabled`, `default_mode` (`single` | `multi`), `robot_use_multi_agent`, `batch_use_multi_agent`, `max_iteration`, `orchestrator_instruction`, optional YAML `sub_agents` merged with disk (same `id` → Markdown wins).
 - **Details** – Streaming events, robots, batch queue, and troubleshooting: **[docs/MULTI_AGENT_EINO.md](docs/MULTI_AGENT_EINO.md)**.
 
-### Skills System
-- **Predefined skills** – System includes 20+ predefined security testing skills (SQL injection, XSS, API security, cloud security, container security, etc.) in the `skills/` directory.
-- **Skill hints in prompts** – When a role is selected, skill names attached to that role are added to the system prompt as recommendations. Skill content is not automatically injected; AI agents must use the `read_skill` tool to access skill details when needed.
-- **On-demand access** – AI agents can also access skills on-demand using built-in tools (`list_skills`, `read_skill`), allowing dynamic skill retrieval during task execution.
-- **Structured format** – Each skill is a directory containing a `SKILL.md` file with detailed testing methods, tool usage, best practices, and examples. Skills support YAML front matter for metadata.
-- **Custom skills** – Create custom skills by adding directories to the `skills/` directory. Each skill directory should contain a `SKILL.md` file with the skill content.
+### Skills System (Agent Skills + Eino)
+- **Layout** – Each skill is a directory with **required** `SKILL.md` only ([Agent Skills](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview)): YAML front matter **only** `name` and `description`, plus Markdown body. Optional sibling files (`FORMS.md`, `REFERENCE.md`, `scripts/*`, …). **No** `SKILL.yaml` (not part of Claude or Eino specs); sections/scripts/progressive behavior are **derived at runtime** from Markdown and the filesystem.
+- **Eino** – Packages are split into `schema.Document` chunks for `FilesystemSkillsRetriever` (`skills.AsEinoRetriever()`) in compose/graphs.
+- **Skill hints in prompts** – Role-bound skill **ids** (directory names) are recommended in the system prompt; full text is not injected by default.
+- **HTTP API** – `/api/skills` listing and `depth` (`summary` | `full`), `section`, and `resource_path` remain for the web UI and ops; **model-side** skill loading uses the multi-agent **`skill`** tool, not MCP.
+- **Shipped demo** – `skills/cyberstrike-eino-demo/`; see `skills/README.md`.
 
-**Creating a custom skill:**
-1. Create a directory in `skills/` (e.g., `skills/my-skill/`)
-2. Create a `SKILL.md` file in that directory with the skill content
-3. Attach the skill to a role by adding it to the role's `skills` field in the role YAML file
+**Creating a skill:**
+1. `mkdir skills/<skill-id>` and add standard `SKILL.md` (+ any optional files), or drop in an open-source skill folder as-is.
+2. Reference `<skill-id>` in a role’s `skills` list in `roles/*.yaml`.
 
 ### Tool Orchestration & Extensions
 - **YAML recipes** in `tools/*.yaml` describe commands, arguments, prompts, and metadata.
@@ -433,7 +431,7 @@ A test SSE MCP server is available at `cmd/test-sse-mcp-server/` for validation 
 
 ### Knowledge Base
 - **Vector search** – AI agent can automatically search the knowledge base for relevant security knowledge during conversations using the `search_knowledge_base` tool.
-- **Hybrid retrieval** – combines vector similarity search with keyword matching for better accuracy.
+- **Vector retrieval** – cosine similarity over stored embeddings, aligned with Eino `retriever.Retriever` usage.
 - **Auto-indexing** – scans the `knowledge_base/` directory for Markdown files and automatically indexes them with embeddings.
 - **Web management** – create, update, delete knowledge items through the web UI, with category-based organization.
 - **Retrieval logs** – tracks all knowledge retrieval operations for audit and debugging.
@@ -457,7 +455,6 @@ A test SSE MCP server is available at `cmd/test-sse-mcp-server/` for validation 
      retrieval:
        top_k: 5
        similarity_threshold: 0.7
-       hybrid_weight: 0.7
    ```
 2. **Add knowledge files** – place Markdown files in `knowledge_base/` directory, organized by category (e.g., `knowledge_base/SQL Injection/README.md`).
 3. **Scan and index** – use the web UI to scan the knowledge base directory, which will automatically import files and build vector embeddings.
@@ -516,8 +513,7 @@ knowledge:
     api_key: ""  # Leave empty to use OpenAI api_key
   retrieval:
     top_k: 5  # Number of top results to return
-    similarity_threshold: 0.7  # Minimum similarity score (0-1)
-    hybrid_weight: 0.7  # Weight for vector search (1.0 = pure vector, 0.0 = pure keyword)
+    similarity_threshold: 0.7  # Minimum cosine similarity (0-1)
 roles_dir: "roles"  # Role configuration directory (relative to config file)
 skills_dir: "skills"  # Skills directory (relative to config file)
 agents_dir: "agents"  # Multi-agent Markdown definitions (orchestrator + sub-agents)
@@ -583,7 +579,7 @@ CyberStrikeAI/
 ├── web/                 # Static SPA + templates
 ├── tools/               # YAML tool recipes (100+ examples provided)
 ├── roles/               # Role configurations (12+ predefined security testing roles)
-├── skills/              # Skills directory (20+ predefined security testing skills)
+├── skills/              # Agent Skills dirs (SKILL.md + optional files; demo: cyberstrike-eino-demo)
 ├── agents/              # Multi-agent Markdown (orchestrator.md + sub-agent *.md)
 ├── docs/                # Documentation (e.g. robot/chatbot guide, MULTI_AGENT_EINO.md)
 ├── images/              # Docs screenshots & diagrams
