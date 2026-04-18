@@ -195,6 +195,8 @@
     "agentModePanelTitle": "对话模式",
     "agentModeReactNative": "原生 ReAct 模式",
     "agentModeReactNativeHint": "经典单代理 ReAct 与 MCP 工具",
+    "agentModeEinoSingle": "Eino 单代理（ADK）",
+    "agentModeEinoSingleHint": "Eino ChatModelAgent + Runner，MCP 工具（/api/eino-agent）",
     "agentModeDeep": "Deep（DeepAgent）",
     "agentModeDeepHint": "Eino DeepAgent，task 调度子代理",
     "agentModePlanExecuteLabel": "Plan-Execute",

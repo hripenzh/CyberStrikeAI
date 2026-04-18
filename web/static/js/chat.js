@@ -32,9 +32,10 @@ const CHAT_FILE_DEFAULT_PROMPT = '请根据上传的文件内容进行分析。'
 let chatAttachments = [];
 let chatAttachmentSeq = 0;
 
-// 对话模式：react = 原生 ReAct（/agent-loop）；deep / plan_execute / supervisor = Eino（/api/multi-agent/stream，请求体 orchestration）
+// 对话模式：react = 原生 ReAct（/agent-loop）；eino_single = Eino ADK 单代理（/api/eino-agent/stream）；deep / plan_execute / supervisor = Eino 多代理（/api/multi-agent/stream，请求体 orchestration）
 const AGENT_MODE_STORAGE_KEY = 'cyberstrike-chat-agent-mode';
 const CHAT_AGENT_MODE_REACT = 'react';
+const CHAT_AGENT_MODE_EINO_SINGLE = 'eino_single';
 const CHAT_AGENT_EINO_MODES = ['deep', 'plan_execute', 'supervisor'];
 let multiAgentAPIEnabled = false;
 
@@ -49,23 +50,33 @@ function chatAgentModeIsEino(mode) {
     return CHAT_AGENT_EINO_MODES.indexOf(mode) >= 0;
 }
 
-/** 将 localStorage / 历史值规范为 react | deep | plan_execute | supervisor */
+function chatAgentModeIsEinoSingle(mode) {
+    return mode === CHAT_AGENT_MODE_EINO_SINGLE;
+}
+
+/** 将 localStorage / 历史值规范为 react | eino_single | deep | plan_execute | supervisor */
 function chatAgentModeNormalizeStored(stored, cfg) {
     const pub = cfg && cfg.multi_agent ? cfg.multi_agent : null;
+    const multiOn = !!(pub && pub.enabled);
     const defOrch = 'deep';
     let s = stored;
     if (s === 'single') s = CHAT_AGENT_MODE_REACT;
     if (s === 'multi') s = defOrch;
-    if (s === CHAT_AGENT_MODE_REACT || chatAgentModeIsEino(s)) return s;
+    if (s === CHAT_AGENT_MODE_REACT || chatAgentModeIsEinoSingle(s)) return s;
+    if (chatAgentModeIsEino(s)) {
+        return multiOn ? s : CHAT_AGENT_MODE_REACT;
+    }
     const defMulti = pub && pub.default_mode === 'multi';
-    return defMulti ? defOrch : CHAT_AGENT_MODE_REACT;
+    return defMulti && multiOn ? defOrch : CHAT_AGENT_MODE_REACT;
 }
 
 if (typeof window !== 'undefined') {
     window.csaiChatAgentMode = {
         EINO_MODES: CHAT_AGENT_EINO_MODES,
+        EINO_SINGLE: CHAT_AGENT_MODE_EINO_SINGLE,
         REACT: CHAT_AGENT_MODE_REACT,
         isEino: chatAgentModeIsEino,
+        isEinoSingle: chatAgentModeIsEinoSingle,
         normalizeStored: chatAgentModeNormalizeStored,
         normalizeOrchestration: normalizeOrchestrationClient
     };
@@ -82,12 +93,15 @@ function getAgentModeLabelForValue(mode) {
                 return window.t('chat.agentModePlanExecuteLabel');
             case 'supervisor':
                 return window.t('chat.agentModeSupervisorLabel');
+            case CHAT_AGENT_MODE_EINO_SINGLE:
+                return window.t('chat.agentModeEinoSingle');
             default:
                 return mode;
         }
     }
     switch (mode) {
         case CHAT_AGENT_MODE_REACT: return '原生 ReAct';
+        case CHAT_AGENT_MODE_EINO_SINGLE: return 'Eino 单代理';
         case 'deep': return 'Deep';
         case 'plan_execute': return 'Plan-Execute';
         case 'supervisor': return 'Supervisor';
@@ -98,6 +112,7 @@ function getAgentModeLabelForValue(mode) {
 function getAgentModeIconForValue(mode) {
     switch (mode) {
         case CHAT_AGENT_MODE_REACT: return '🤖';
+        case CHAT_AGENT_MODE_EINO_SINGLE: return '⚡';
         case 'deep': return '🧩';
         case 'plan_execute': return '📋';
         case 'supervisor': return '🎯';
@@ -146,7 +161,7 @@ function toggleAgentModePanel() {
 }
 
 function selectAgentMode(mode) {
-    const ok = mode === CHAT_AGENT_MODE_REACT || chatAgentModeIsEino(mode);
+    const ok = mode === CHAT_AGENT_MODE_REACT || chatAgentModeIsEinoSingle(mode) || chatAgentModeIsEino(mode);
     if (!ok) return;
     try {
         localStorage.setItem(AGENT_MODE_STORAGE_KEY, mode);
@@ -167,11 +182,15 @@ async function initChatAgentModeFromConfig() {
         const wrap = document.getElementById('agent-mode-wrapper');
         const sel = document.getElementById('agent-mode-select');
         if (!wrap || !sel) return;
-        if (!multiAgentAPIEnabled) {
-            wrap.style.display = 'none';
-            return;
-        }
         wrap.style.display = '';
+        document.querySelectorAll('.agent-mode-option').forEach(function (el) {
+            const v = el.getAttribute('data-value');
+            if (v === 'deep' || v === 'plan_execute' || v === 'supervisor') {
+                el.style.display = multiAgentAPIEnabled ? '' : 'none';
+            } else {
+                el.style.display = '';
+            }
+        });
         let stored = localStorage.getItem(AGENT_MODE_STORAGE_KEY);
         stored = chatAgentModeNormalizeStored(stored, cfg);
         try {
@@ -188,7 +207,7 @@ document.addEventListener('languagechange', function () {
     const hid = document.getElementById('agent-mode-select');
     if (!hid) return;
     const v = hid.value;
-    if (v === CHAT_AGENT_MODE_REACT || chatAgentModeIsEino(v)) {
+    if (v === CHAT_AGENT_MODE_REACT || chatAgentModeIsEinoSingle(v) || chatAgentModeIsEino(v)) {
         syncAgentModeFromValue(v);
     }
 });
@@ -382,8 +401,9 @@ async function sendMessage() {
     try {
         const modeSel = document.getElementById('agent-mode-select');
         const modeVal = modeSel ? modeSel.value : CHAT_AGENT_MODE_REACT;
+        const useEinoSingle = chatAgentModeIsEinoSingle(modeVal);
         const useMulti = multiAgentAPIEnabled && chatAgentModeIsEino(modeVal);
-        const streamPath = useMulti ? '/api/multi-agent/stream' : '/api/agent-loop/stream';
+        const streamPath = useEinoSingle ? '/api/eino-agent/stream' : useMulti ? '/api/multi-agent/stream' : '/api/agent-loop/stream';
         if (useMulti && modeVal) {
             body.orchestration = modeVal;
         }

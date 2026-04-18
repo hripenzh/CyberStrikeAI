@@ -46,9 +46,6 @@ function resolveWebshellAiStreamRequest() {
         if (!r.ok) return null;
         return r.json();
     }).then(function (cfg) {
-        if (!cfg || !cfg.multi_agent || !cfg.multi_agent.enabled) {
-            return { path: '/api/agent-loop/stream', orchestration: null };
-        }
         var norm = null;
         if (typeof window.csaiChatAgentMode === 'object' && typeof window.csaiChatAgentMode.normalizeStored === 'function') {
             norm = window.csaiChatAgentMode.normalizeStored(localStorage.getItem('cyberstrike-chat-agent-mode'), cfg);
@@ -57,6 +54,12 @@ function resolveWebshellAiStreamRequest() {
             if (mode === 'single') mode = 'react';
             if (mode === 'multi') mode = 'deep';
             norm = mode || 'react';
+        }
+        if (typeof window.csaiChatAgentMode === 'object' && typeof window.csaiChatAgentMode.isEinoSingle === 'function' && window.csaiChatAgentMode.isEinoSingle(norm)) {
+            return { path: '/api/eino-agent/stream', orchestration: null };
+        }
+        if (!cfg || !cfg.multi_agent || !cfg.multi_agent.enabled) {
+            return { path: '/api/agent-loop/stream', orchestration: null };
         }
         if (typeof window.csaiChatAgentMode === 'object' && typeof window.csaiChatAgentMode.isEino === 'function' && window.csaiChatAgentMode.isEino(norm)) {
             return { path: '/api/multi-agent/stream', orchestration: norm };
