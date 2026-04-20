@@ -335,6 +335,9 @@ func RunDeepAgent(
 		}
 		sb.WriteString("你是监督协调者：可将任务通过 transfer 工具委派给下列专家子代理（使用其在系统中的 Agent 名称）。专家列表：")
 		for _, sa := range subAgents {
+			if sa == nil {
+				continue
+			}
 			sb.WriteString("\n- ")
 			sb.WriteString(sa.Name(ctx))
 		}
@@ -349,14 +352,15 @@ func RunDeepAgent(
 		deepShell = einoLoc
 	}
 
-	deepHandlers := []adk.ChatModelAgentMiddleware{}
+	// noNestedTaskMiddleware 必须在最外层（最先拦截），防止 skill 或其他中间件内部触发 task 调用绕过检测。
+	deepHandlers := []adk.ChatModelAgentMiddleware{newNoNestedTaskMiddleware()}
 	if len(mainOrchestratorPre) > 0 {
 		deepHandlers = append(deepHandlers, mainOrchestratorPre...)
 	}
 	if einoSkillMW != nil {
 		deepHandlers = append(deepHandlers, einoSkillMW)
 	}
-	deepHandlers = append(deepHandlers, newNoNestedTaskMiddleware(), mainSumMw)
+	deepHandlers = append(deepHandlers, mainSumMw)
 
 	supHandlers := []adk.ChatModelAgentMiddleware{}
 	if len(mainOrchestratorPre) > 0 {
@@ -387,6 +391,14 @@ func RunDeepAgent(
 		if perr != nil {
 			return nil, fmt.Errorf("plan_execute 执行器模型: %w", perr)
 		}
+		// 构建 filesystem 中间件（与 Deep sub-agent 一致）
+		var peFsMw adk.ChatModelAgentMiddleware
+		if einoSkillMW != nil && einoFSTools && einoLoc != nil {
+			peFsMw, err = subAgentFilesystemMiddleware(ctx, einoLoc)
+			if err != nil {
+				return nil, fmt.Errorf("plan_execute filesystem 中间件: %w", err)
+			}
+		}
 		peRoot, perr := NewPlanExecuteRoot(ctx, &PlanExecuteRootArgs{
 			MainToolCallingModel: mainModel,
 			ExecModel:            execModel,
@@ -396,6 +408,9 @@ func RunDeepAgent(
 			LoopMaxIter:          ma.PlanExecuteLoopMaxIterations,
 			AppCfg:               appCfg,
 			Logger:               logger,
+			ExecPreMiddlewares:   mainOrchestratorPre,
+			SkillMiddleware:      einoSkillMW,
+			FilesystemMiddleware: peFsMw,
 		})
 		if perr != nil {
 			return nil, perr
@@ -493,7 +508,8 @@ func RunDeepAgent(
 		McpIDsMu:             &mcpIDsMu,
 		McpIDs:               &mcpIDs,
 		DA:                   da,
-		EmptyResponseMessage: "（Eino 多代理编排已完成，但未捕获到助手文本输出。请查看过程详情或日志。）",
+		EmptyResponseMessage: "(Eino multi-agent orchestration completed but no assistant text was captured. Check process details or logs.) " +
+			"（Eino 多代理编排已完成，但未捕获到助手文本输出。请查看过程详情或日志。）",
 	}, baseMsgs)
 }
 

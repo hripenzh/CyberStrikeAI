@@ -23,13 +23,13 @@ func newPlanExecuteExecutor(ctx context.Context, cfg *planexecute.ExecutorConfig
 	genInput := func(ctx context.Context, instruction string, _ *adk.AgentInput) ([]adk.Message, error) {
 		plan, ok := adk.GetSessionValue(ctx, planexecute.PlanSessionKey)
 		if !ok {
-			panic("impossible: plan not found")
+			return nil, fmt.Errorf("plan_execute executor: session value %q missing (possible session corruption)", planexecute.PlanSessionKey)
 		}
 		plan_ := plan.(planexecute.Plan)
 
 		userInput, ok := adk.GetSessionValue(ctx, planexecute.UserInputSessionKey)
 		if !ok {
-			panic("impossible: user input not found")
+			return nil, fmt.Errorf("plan_execute executor: session value %q missing (possible session corruption)", planexecute.UserInputSessionKey)
 		}
 		userInput_ := userInput.([]adk.Message)
 

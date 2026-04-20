@@ -3,6 +3,7 @@ package multiagent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -44,6 +45,17 @@ func isSoftRecoverableToolError(err error) bool {
 	if err == nil {
 		return false
 	}
+
+	// 用户取消 — 不应重试，让 hard error 传播以终止编排。
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+
+	// 工具执行超时 — 转为 soft error 让 LLM 知晓并选择替代方案，而非全局重试。
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+
 	s := strings.ToLower(err.Error())
 
 	// JSON unmarshal/parse failures — the model generated truncated or malformed arguments.

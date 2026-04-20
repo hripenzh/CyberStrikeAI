@@ -79,6 +79,21 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 	mcpIDsMu := args.McpIDsMu
 	mcpIDs := args.McpIDs
 
+	// panic recovery：防止 Eino 框架内部 panic 导致整个 goroutine 崩溃、连接无法正常关闭。
+	defer func() {
+		if r := recover(); r != nil {
+			if logger != nil {
+				logger.Error("eino runner panic recovered", zap.Any("recover", r), zap.Stack("stack"))
+			}
+			if progress != nil {
+				progress("error", fmt.Sprintf("Internal error: %v / 内部错误: %v", r, r), map[string]interface{}{
+					"conversationId": conversationID,
+					"source":         "eino",
+				})
+			}
+		}
+	}()
+
 	var lastRunMsgs []adk.Message
 	var lastAssistant string
 	var lastPlanExecuteExecutor string
@@ -86,7 +101,8 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 
 	emptyHint := strings.TrimSpace(args.EmptyResponseMessage)
 	if emptyHint == "" {
-		emptyHint = "（Eino 会话已完成，但未捕获到助手文本输出。请查看过程详情或日志。）"
+		emptyHint = "(Eino session completed but no assistant text was captured. Check process details or logs.) " +
+			"（Eino 会话已完成，但未捕获到助手文本输出。请查看过程详情或日志。）"
 	}
 
 attemptLoop:
@@ -191,6 +207,20 @@ attemptLoop:
 		iter := runner.Run(ctx, msgs)
 
 		for {
+			// 检测 context 取消（用户关闭浏览器、请求超时等），flush pending 工具状态避免 UI 卡在 "执行中"。
+			select {
+			case <-ctx.Done():
+				flushAllPendingAsFailed(ctx.Err())
+				if progress != nil {
+					progress("error", "Request cancelled / 请求已取消", map[string]interface{}{
+						"conversationId": conversationID,
+						"source":         "eino",
+					})
+				}
+				return nil, ctx.Err()
+			default:
+			}
+
 			ev, ok := iter.Next()
 			if !ok {
 				lastRunMsgs = msgs
@@ -308,7 +338,10 @@ attemptLoop:
 							break
 						}
 						if logger != nil {
-							logger.Warn("eino stream recv", zap.Error(rerr))
+							logger.Warn("eino stream recv error, flushing incomplete stream",
+								zap.Error(rerr),
+								zap.String("agent", ev.AgentName),
+								zap.Int("toolFragments", len(toolStreamFragments)))
 						}
 						break
 					}
@@ -531,6 +564,11 @@ attemptLoop:
 	}
 	cleaned = dedupeRepeatedParagraphs(cleaned, 80)
 	cleaned = dedupeParagraphsByLineFingerprint(cleaned, 100)
+	// 防止超长响应导致 JSON 序列化慢或 OOM（多代理拼接大量工具输出时可能触发）。
+	const maxResponseRunes = 100000
+	if rs := []rune(cleaned); len(rs) > maxResponseRunes {
+		cleaned = string(rs[:maxResponseRunes]) + "\n\n... (response truncated / 响应已截断)"
+	}
 	out := &RunResult{
 		Response:         cleaned,
 		MCPExecutionIDs:  ids,
