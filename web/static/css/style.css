@@ -1144,12 +1144,18 @@ header {
 .hitl-config-input {
     width: 100%;
     height: 38px;
-    border: 1px solid var(--border-color);
+    border: 1px solid #e2e8f0;
     border-radius: 8px;
     background: #fff;
-    padding: 0 10px;
+    padding: 0 12px;
     font-size: 14px;
     color: var(--text-primary);
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+.hitl-config-input:focus {
+    outline: none;
+    border-color: var(--accent-color, #0066ff);
+    box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.1);
 }
 
 .hitl-pending-list {
@@ -1159,43 +1165,133 @@ header {
 }
 
 .hitl-pending-item {
-    border: 1px solid rgba(99, 102, 241, 0.25);
+    border: 1px solid #dbeafe;
     border-radius: 10px;
-    padding: 12px;
-    background: rgba(15, 23, 42, 0.45);
+    padding: 16px;
+    background: #f8fbff;
+    transition: box-shadow 0.2s;
+}
+.hitl-pending-item:hover {
+    box-shadow: 0 2px 12px rgba(0, 102, 255, 0.08);
 }
 
 .hitl-pending-item-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    margin-bottom: 10px;
+}
+
+.hitl-pending-item-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.hitl-tool-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--accent-color, #0066ff);
+    color: #fff;
+}
+
+.hitl-mode-tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 500;
+    background: #e0e7ff;
+    color: #4338ca;
+}
+.hitl-mode-tag--review_edit {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.hitl-pending-meta {
+    font-size: 12px;
+    color: #94a3b8;
     margin-bottom: 8px;
+    word-break: break-all;
+}
+
+.hitl-pending-payload {
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 160px;
+    overflow: auto;
+    margin: 0 0 4px 0;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    font-size: 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #334155;
+    line-height: 1.5;
+}
+
+.hitl-pending-item-header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.hitl-dismiss-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    color: var(--text-secondary, #64748b);
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: background 0.15s, color 0.15s;
+}
+.hitl-dismiss-btn:hover {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
 }
 
 .hitl-pending-actions {
     display: flex;
     gap: 8px;
-    margin-top: 10px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid #e2e8f0;
 }
 
 .hitl-edit-args {
     width: 100%;
     min-height: 76px;
     margin-top: 8px;
-    border: 1px solid rgba(148, 163, 184, 0.35);
+    border: 1px solid #e2e8f0;
     border-radius: 8px;
     background: #ffffff;
     color: #1f2937;
-    padding: 8px;
+    padding: 10px 12px;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 12px;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+.hitl-edit-args:focus {
+    outline: none;
+    border-color: var(--accent-color, #0066ff);
+    box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.1);
 }
 
 .hitl-input-help {
     margin-top: 6px;
     margin-bottom: 6px;
     font-size: 12px;
-    color: #64748b;
+    color: var(--accent-color, #0066ff);
     line-height: 1.4;
 }
 

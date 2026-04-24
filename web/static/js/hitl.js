@@ -282,21 +282,29 @@ async function refreshHitlPending() {
             const preview = payload.length > 280 ? (payload.slice(0, 280) + '...') : payload;
             const mode = String(item.mode || '').trim().toLowerCase();
             const allowEdit = mode === 'review_edit';
+            var escId = escapeHtml(String(item.id || ''));
+            var qId = JSON.stringify(String(item.id || '')).replace(/"/g, '&quot;');
+            var qConv = JSON.stringify(String(item.conversationId || '')).replace(/"/g, '&quot;');
             return (
                 '<div class="hitl-pending-item">' +
                 '<div class="hitl-pending-item-header">' +
-                '<strong>' + escapeHtml(item.toolName || '-') + '</strong>' +
-                '<span>' + escapeHtml(item.mode || '-') + '</span>' +
+                '<div class="hitl-pending-item-title">' +
+                '<span class="hitl-tool-badge">' + escapeHtml(item.toolName || '-') + '</span>' +
+                '<span class="hitl-mode-tag hitl-mode-tag--' + escapeHtml(mode) + '">' + escapeHtml(item.mode || '-') + '</span>' +
                 '</div>' +
-                '<div><small>conversation: ' + escapeHtml(item.conversationId || '-') + '</small></div>' +
-                '<pre style="white-space:pre-wrap;max-height:160px;overflow:auto;">' + escapeHtml(preview) + '</pre>' +
+                '<button class="hitl-dismiss-btn" title="忽略" onclick="dismissHitlItem(' + qId + ')">&times;</button>' +
+                '</div>' +
+                '<div class="hitl-pending-meta">会话：' + escapeHtml(item.conversationId || '-') + '</div>' +
+                '<pre class="hitl-pending-payload">' + escapeHtml(preview) + '</pre>' +
                 (allowEdit
-                    ? ('<div class="hitl-input-help">审查编辑模式：可填写 JSON 对象覆盖参数，示例：{"command":"ls -la"}</div>' +
-                       '<textarea id="hitl-edit-' + escapeHtml(String(item.id || '')) + '" class="hitl-edit-args" placeholder=\'{"command":"ls -la"}\'></textarea>')
+                    ? ('<div class="hitl-input-help">审查编辑模式：可填写 JSON 对象覆盖参数。示例：{"command":"ls -la"}</div>' +
+                       '<textarea id="hitl-edit-' + escId + '" class="hitl-edit-args" placeholder=\'{"command":"ls -la"}\'></textarea>')
                     : '<div class="hitl-input-help">审批模式：仅通过/拒绝，不支持改参。</div>') +
+                '<div class="hitl-input-help">备注（可选）：建议写审批依据。</div>' +
+                '<input id="hitl-comment-' + escId + '" class="hitl-config-input hitl-inline-comment" type="text" placeholder="例如：允许只读命令">' +
                 '<div class="hitl-pending-actions">' +
-                '<button class="btn-primary" onclick="submitHitlDecision(' + JSON.stringify(String(item.id || '')) + ',\'approve\',' + JSON.stringify(String(item.conversationId || '')) + ')">通过</button>' +
-                '<button class="btn-secondary" onclick="submitHitlDecision(' + JSON.stringify(String(item.id || '')) + ',\'reject\',' + JSON.stringify(String(item.conversationId || '')) + ')">拒绝</button>' +
+                '<button class="btn-secondary" onclick="submitHitlDecision(' + qId + ',&quot;reject&quot;,' + qConv + ')">拒绝</button>' +
+                '<button class="btn-primary" onclick="submitHitlDecision(' + qId + ',&quot;approve&quot;,' + qConv + ')">通过</button>' +
                 '</div>' +
                 '</div>'
             );
@@ -307,7 +315,8 @@ async function refreshHitlPending() {
 }
 
 async function submitHitlDecision(interruptId, decision, conversationIdOpt) {
-    const comment = prompt('审批备注（可选）') || '';
+    const commentBox = document.getElementById('hitl-comment-' + interruptId);
+    const comment = (commentBox && commentBox.value) ? commentBox.value.trim() : '';
     let editedArguments = null;
     const editBox = document.getElementById('hitl-edit-' + interruptId);
     if (editBox && editBox.value && editBox.value.trim()) {
@@ -332,7 +341,7 @@ async function submitHitlDecisionWithPayload(interruptId, decision, comment, edi
     if (!resp.ok) {
         const errText = await readHitlApiError(resp);
         if (resp.status === 409 && (errText.indexOf('already resolved') >= 0 || errText.indexOf('not found') >= 0)) {
-            refreshHitlPending();
+            await dismissHitlItem(interruptId, true);
             return true;
         }
         alert('提交失败：' + errText);
@@ -363,9 +372,24 @@ async function readHitlApiError(resp) {
     }
 }
 
+async function dismissHitlItem(interruptId, silent) {
+    try {
+        await hitlApiFetch('/api/hitl/dismiss', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ interruptId: interruptId })
+        });
+    } catch (e) {
+        if (!silent) { console.warn('dismissHitlItem', e); }
+    }
+    refreshHitlPending();
+}
+
 window.refreshHitlPending = refreshHitlPending;
 window.submitHitlDecision = submitHitlDecision;
 window.submitHitlDecisionWithPayload = submitHitlDecisionWithPayload;
+window.dismissHitlItem = dismissHitlItem;
 window.followAgentRunAfterHitlDecision = followAgentRunAfterHitlDecision;
 
 window.addEventListener('hitl-interrupt', function () {
