@@ -26,8 +26,21 @@ final class CyberStrikeAIClient {
     }
 
     enum AgentMode {
-        SINGLE,
-        MULTI
+        NATIVE_REACT("Native ReAct", "/api/agent-loop/stream", null),
+        EINO_SINGLE("Eino Single (ADK)", "/api/eino-agent/stream", null),
+        DEEP("Deep (DeepAgent)", "/api/multi-agent/stream", "deep"),
+        PLAN_EXECUTE("Plan-Execute", "/api/multi-agent/stream", "plan_execute"),
+        SUPERVISOR("Supervisor", "/api/multi-agent/stream", "supervisor");
+
+        final String displayName;
+        final String streamPath;
+        final String orchestration;
+
+        AgentMode(String displayName, String streamPath, String orchestration) {
+            this.displayName = displayName;
+            this.streamPath = streamPath;
+            this.orchestration = orchestration;
+        }
     }
 
     interface StreamListener {
@@ -94,13 +107,15 @@ final class CyberStrikeAIClient {
     }
 
     void streamTest(Config cfg, String token, String message, StreamListener listener) {
-        String path = (cfg.agentMode == AgentMode.MULTI) ? "/api/multi-agent/stream" : "/api/agent-loop/stream";
-        String urlStr = cfg.baseUrl + path;
+        String urlStr = cfg.baseUrl + cfg.agentMode.streamPath;
 
         Map<String, Object> payload = new HashMap<>();
         payload.put("message", message);
         payload.put("conversationId", "");
         payload.put("role", "");
+        if (cfg.agentMode.orchestration != null) {
+            payload.put("orchestration", cfg.agentMode.orchestration);
+        }
 
         new Thread(() -> {
             HttpURLConnection conn = null;
@@ -184,11 +199,16 @@ final class CyberStrikeAIClient {
         String message = payload.get("message") != null ? String.valueOf(payload.get("message")) : "";
         String conversationId = payload.get("conversationId") != null ? String.valueOf(payload.get("conversationId")) : "";
         String role = payload.get("role") != null ? String.valueOf(payload.get("role")) : "";
-        return "{"
-                + "\"message\":\"" + escapeJson(message) + "\","
-                + "\"conversationId\":\"" + escapeJson(conversationId) + "\","
-                + "\"role\":\"" + escapeJson(role) + "\""
-                + "}";
+        StringBuilder sb = new StringBuilder();
+        sb.append("{");
+        sb.append("\"message\":\"").append(escapeJson(message)).append("\",");
+        sb.append("\"conversationId\":\"").append(escapeJson(conversationId)).append("\",");
+        sb.append("\"role\":\"").append(escapeJson(role)).append("\"");
+        if (payload.containsKey("orchestration") && payload.get("orchestration") != null) {
+            sb.append(",\"orchestration\":\"").append(escapeJson(String.valueOf(payload.get("orchestration")))).append("\"");
+        }
+        sb.append("}");
+        return sb.toString();
     }
 
     private static String escapeJson(String s) {

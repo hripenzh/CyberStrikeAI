@@ -15,7 +15,9 @@ final class CyberStrikeAITab implements ITab {
     private final JTextField hostField = new JTextField("127.0.0.1");
     private final JTextField portField = new JTextField("8080");
     private final JPasswordField passwordField = new JPasswordField();
-    private final JComboBox<String> agentModeBox = new JComboBox<>(new String[]{"Single Agent", "Multi Agent"});
+    private final JComboBox<String> agentModeBox = new JComboBox<>(new String[]{
+            "Native ReAct", "Eino Single (ADK)", "Deep (DeepAgent)", "Plan-Execute", "Supervisor"
+    });
     private final JButton validateButton = new JButton("Validate");
     private final JButton clearButton = new JButton("Clear Output");
     private final JButton stopButton = new JButton("Stop");
@@ -98,7 +100,7 @@ final class CyberStrikeAITab implements ITab {
         hostField.setColumns(14);
         portField.setColumns(6);
         passwordField.setColumns(12);
-        agentModeBox.setPreferredSize(new Dimension(160, agentModeBox.getPreferredSize().height));
+        agentModeBox.setPreferredSize(new Dimension(200, agentModeBox.getPreferredSize().height));
 
         JPanel row1 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
         row1.add(new JLabel("Host"));
@@ -475,14 +477,17 @@ final class CyberStrikeAITab implements ITab {
         renderMarkdownBox.addActionListener(e -> refreshOutputView());
     }
 
+    private static final CyberStrikeAIClient.AgentMode[] AGENT_MODES = CyberStrikeAIClient.AgentMode.values();
+
     CyberStrikeAIClient.Config currentConfig() {
         String host = hostField.getText().trim();
         String port = portField.getText().trim();
         String password = new String(passwordField.getPassword());
         String baseUrl = "http://" + host + ":" + port;
-        CyberStrikeAIClient.AgentMode mode = agentModeBox.getSelectedIndex() == 1
-                ? CyberStrikeAIClient.AgentMode.MULTI
-                : CyberStrikeAIClient.AgentMode.SINGLE;
+        int idx = agentModeBox.getSelectedIndex();
+        CyberStrikeAIClient.AgentMode mode = (idx >= 0 && idx < AGENT_MODES.length)
+                ? AGENT_MODES[idx]
+                : CyberStrikeAIClient.AgentMode.NATIVE_REACT;
         return new CyberStrikeAIClient.Config(baseUrl, password, mode);
     }
 

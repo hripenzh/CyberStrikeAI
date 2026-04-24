@@ -64,7 +64,7 @@ public class BurpExtender implements IBurpExtender, IContextMenuFactory {
 
         String prompt = HttpMessageFormatter.toPrompt(helpers, msg, instruction);
         String title = HttpMessageFormatter.getRequestTitle(helpers, msg);
-        String agentModeStr = (cfg.agentMode == CyberStrikeAIClient.AgentMode.MULTI) ? "Multi Agent" : "Single Agent";
+        String agentModeStr = cfg.agentMode.displayName;
         String runId = tab.startNewRun(title, agentModeStr, msg);
         tab.appendProgressToRun(runId, "\n[server] " + cfg.baseUrl + "\n\n");
 
