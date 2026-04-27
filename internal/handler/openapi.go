@@ -6197,7 +6197,7 @@ func (h *OpenAPIHandler) GetConversationResults(c *gin.Context) {
 	}
 
 	// 获取漏洞列表
-	vulnList, err := h.db.ListVulnerabilities(1000, 0, "", conversationID, "", "")
+	vulnList, err := h.db.ListVulnerabilities(1000, 0, "", conversationID, "", "", "", "", "")
 	if err != nil {
 		h.logger.Warn("获取漏洞列表失败", zap.Error(err))
 		vulnList = []*database.Vulnerability{}

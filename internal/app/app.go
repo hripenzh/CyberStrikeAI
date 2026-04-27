@@ -901,6 +901,8 @@ func setupRoutes(
 
 		// 漏洞管理
 		protected.GET("/vulnerabilities", vulnerabilityHandler.ListVulnerabilities)
+		protected.GET("/vulnerabilities/export", vulnerabilityHandler.ExportVulnerabilities)
+		protected.GET("/vulnerabilities/filter-options", vulnerabilityHandler.GetVulnerabilityFilterOptions)
 		protected.GET("/vulnerabilities/stats", vulnerabilityHandler.GetVulnerabilityStats)
 		protected.GET("/vulnerabilities/:id", vulnerabilityHandler.GetVulnerability)
 		protected.POST("/vulnerabilities", vulnerabilityHandler.CreateVulnerability)
