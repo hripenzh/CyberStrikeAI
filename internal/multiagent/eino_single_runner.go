@@ -125,7 +125,7 @@ func RunEinoSingleChatModelAgent(
 		return nil, fmt.Errorf("eino single 模型: %w", err)
 	}
 
-	mainSumMw, err := newEinoSummarizationMiddleware(ctx, mainModel, appCfg, logger)
+	mainSumMw, err := newEinoSummarizationMiddleware(ctx, mainModel, appCfg, &ma.EinoMiddleware, conversationID, logger)
 	if err != nil {
 		return nil, fmt.Errorf("eino single summarization: %w", err)
 	}
@@ -145,6 +145,9 @@ func RunEinoSingleChatModelAgent(
 		handlers = append(handlers, einoSkillMW)
 	}
 	handlers = append(handlers, mainSumMw)
+	if teleMw := newEinoModelInputTelemetryMiddleware(logger, appCfg.OpenAI.Model, conversationID, "eino_single"); teleMw != nil {
+		handlers = append(handlers, teleMw)
+	}
 
 	maxIter := ma.MaxIteration
 	if maxIter <= 0 {
@@ -188,7 +191,7 @@ func RunEinoSingleChatModelAgent(
 		return nil, fmt.Errorf("eino single NewChatModelAgent: %w", err)
 	}
 
-	baseMsgs := historyToMessages(history)
+	baseMsgs := historyToMessages(history, appCfg, &ma.EinoMiddleware)
 	baseMsgs = append(baseMsgs, schema.UserMessage(userMessage))
 
 	streamsMainAssistant := func(agent string) bool {

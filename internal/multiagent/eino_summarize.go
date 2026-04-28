@@ -3,6 +3,8 @@ package multiagent
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"cyberstrike-ai/internal/agent"
@@ -32,6 +34,8 @@ func newEinoSummarizationMiddleware(
 	ctx context.Context,
 	summaryModel model.BaseChatModel,
 	appCfg *config.Config,
+	mwCfg *config.MultiAgentEinoMiddlewareConfig,
+	conversationID string,
 	logger *zap.Logger,
 ) (adk.ChatModelAgentMiddleware, error) {
 	if summaryModel == nil || appCfg == nil {
@@ -41,7 +45,14 @@ func newEinoSummarizationMiddleware(
 	if maxTotal <= 0 {
 		maxTotal = 120000
 	}
-	trigger := int(float64(maxTotal) * 0.9)
+	triggerRatio := 0.8
+	emitInternalEvents := true
+	if mwCfg != nil {
+		triggerRatio = mwCfg.SummarizationTriggerRatioEffective()
+		emitInternalEvents = mwCfg.SummarizationEmitInternalEventsEffective()
+	}
+	// Keep enough safety margin for tokenizer/model-side accounting mismatch.
+	trigger := int(float64(maxTotal) * triggerRatio)
 	if trigger < 4096 {
 		trigger = maxTotal
 		if trigger < 4096 {
@@ -65,6 +76,18 @@ func newEinoSummarizationMiddleware(
 	if recentTrailMax > trigger/2 {
 		recentTrailMax = trigger / 2
 	}
+	transcriptPath := ""
+	if conv := strings.TrimSpace(conversationID); conv != "" {
+		baseRoot := filepath.Join(os.TempDir(), "cyberstrike-summarization")
+		if dbPath := strings.TrimSpace(appCfg.Database.Path); dbPath != "" {
+			// Persist with the same lifecycle as local conversation storage.
+			baseRoot = filepath.Join(filepath.Dir(dbPath), "conversation_artifacts", sanitizeEinoPathSegment(conv), "summarization")
+		}
+		base := baseRoot
+		if mkErr := os.MkdirAll(base, 0o755); mkErr == nil {
+			transcriptPath = filepath.Join(base, "transcript.txt")
+		}
+	}
 
 	mw, err := summarization.New(ctx, &summarization.Config{
 		Model: summaryModel,
@@ -73,7 +96,8 @@ func newEinoSummarizationMiddleware(
 		},
 		TokenCounter:       tokenCounter,
 		UserInstruction:    einoSummarizeUserInstruction,
-		EmitInternalEvents: false,
+		EmitInternalEvents: emitInternalEvents,
+		TranscriptFilePath: transcriptPath,
 		PreserveUserMessages: &summarization.PreserveUserMessages{
 			Enabled:   true,
 			MaxTokens: preserveMax,
@@ -85,11 +109,16 @@ func newEinoSummarizationMiddleware(
 			if logger == nil {
 				return nil
 			}
+			beforeTokens, _ := tokenCounter(ctx, &summarization.TokenCounterInput{Messages: before.Messages})
+			afterTokens, _ := tokenCounter(ctx, &summarization.TokenCounterInput{Messages: after.Messages})
 			logger.Info("eino summarization 已压缩上下文",
 				zap.Int("messages_before", len(before.Messages)),
 				zap.Int("messages_after", len(after.Messages)),
+				zap.Int("tokens_before_estimated", beforeTokens),
+				zap.Int("tokens_after_estimated", afterTokens),
 				zap.Int("max_total_tokens", maxTotal),
 				zap.Int("trigger_context_tokens", trigger),
+				zap.String("transcript_file", transcriptPath),
 			)
 			return nil
 		},

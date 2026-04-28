@@ -72,6 +72,8 @@ type MultiAgentEinoMiddlewareConfig struct {
 	ToolSearchEnable        bool `yaml:"tool_search_enable,omitempty" json:"tool_search_enable,omitempty"`
 	ToolSearchMinTools      int  `yaml:"tool_search_min_tools,omitempty" json:"tool_search_min_tools,omitempty"`           // default 20; applies when len(tools) >= this
 	ToolSearchAlwaysVisible int  `yaml:"tool_search_always_visible,omitempty" json:"tool_search_always_visible,omitempty"` // default 12; first N tools stay always visible
+	// ToolSearchAlwaysVisibleTools keeps specified tool names always visible (never hidden by tool_search).
+	ToolSearchAlwaysVisibleTools []string `yaml:"tool_search_always_visible_tools,omitempty" json:"tool_search_always_visible_tools,omitempty"`
 	// Plantask adds TaskCreate/Get/Update/List (file-backed under skills dir); requires eino_skills + local backend.
 	PlantaskEnable bool `yaml:"plantask_enable,omitempty" json:"plantask_enable,omitempty"`
 	// PlantaskRelDir relative to skills_dir for per-conversation task boards (default .eino/plantask).
@@ -79,8 +81,24 @@ type MultiAgentEinoMiddlewareConfig struct {
 	// Reduction truncates/offloads large tool outputs (requires eino local backend for Write).
 	ReductionEnable       bool     `yaml:"reduction_enable,omitempty" json:"reduction_enable,omitempty"`
 	ReductionRootDir      string   `yaml:"reduction_root_dir,omitempty" json:"reduction_root_dir,omitempty"` // default: os temp + conversation id
+	ReductionMaxLengthForTrunc int `yaml:"reduction_max_length_for_trunc,omitempty" json:"reduction_max_length_for_trunc,omitempty"` // default 12000
+	ReductionMaxTokensForClear int `yaml:"reduction_max_tokens_for_clear,omitempty" json:"reduction_max_tokens_for_clear,omitempty"` // default 50000
 	ReductionClearExclude []string `yaml:"reduction_clear_exclude,omitempty" json:"reduction_clear_exclude,omitempty"`
 	ReductionSubAgents    bool     `yaml:"reduction_sub_agents,omitempty" json:"reduction_sub_agents,omitempty"` // also attach to sub-agents
+	// SummarizationTriggerRatio controls summarization trigger threshold as max_total_tokens * ratio (default 0.8).
+	SummarizationTriggerRatio float64 `yaml:"summarization_trigger_ratio,omitempty" json:"summarization_trigger_ratio,omitempty"`
+	// SummarizationEmitInternalEvents controls middleware internal event emission (default true).
+	SummarizationEmitInternalEvents *bool `yaml:"summarization_emit_internal_events,omitempty" json:"summarization_emit_internal_events,omitempty"`
+	// HistoryInputBudgetRatio caps pre-agent history tokens as max_total_tokens * ratio (default 0.35).
+	HistoryInputBudgetRatio float64 `yaml:"history_input_budget_ratio,omitempty" json:"history_input_budget_ratio,omitempty"`
+	// PlanExecuteUserInputBudgetRatio caps planner/replanner/executor userInput prompt budget ratio (default 0.35).
+	PlanExecuteUserInputBudgetRatio float64 `yaml:"plan_execute_user_input_budget_ratio,omitempty" json:"plan_execute_user_input_budget_ratio,omitempty"`
+	// PlanExecuteExecutedStepsBudgetRatio caps executed_steps prompt budget ratio (default 0.2).
+	PlanExecuteExecutedStepsBudgetRatio float64 `yaml:"plan_execute_executed_steps_budget_ratio,omitempty" json:"plan_execute_executed_steps_budget_ratio,omitempty"`
+	// PlanExecuteMaxStepResultRunes caps each executed step result length for prompt view (default 4000).
+	PlanExecuteMaxStepResultRunes int `yaml:"plan_execute_max_step_result_runes,omitempty" json:"plan_execute_max_step_result_runes,omitempty"`
+	// PlanExecuteKeepLastSteps keeps only the tail steps in prompt view (default 8).
+	PlanExecuteKeepLastSteps int `yaml:"plan_execute_keep_last_steps,omitempty" json:"plan_execute_keep_last_steps,omitempty"`
 	// CheckpointDir when non-empty enables adk.Runner CheckPointStore (file-backed) for interrupt/resume persistence.
 	CheckpointDir string `yaml:"checkpoint_dir,omitempty" json:"checkpoint_dir,omitempty"`
 	// DeepOutputKey passed to deep.Config OutputKey (session final text); empty = off.
@@ -89,6 +107,97 @@ type MultiAgentEinoMiddlewareConfig struct {
 	DeepModelRetryMaxRetries int `yaml:"deep_model_retry_max_retries,omitempty" json:"deep_model_retry_max_retries,omitempty"`
 	// TaskToolDescriptionPrefix when non-empty sets deep.Config TaskToolDescriptionGenerator (sub-agent names appended).
 	TaskToolDescriptionPrefix string `yaml:"task_tool_description_prefix,omitempty" json:"task_tool_description_prefix,omitempty"`
+}
+
+func (c MultiAgentEinoMiddlewareConfig) SummarizationTriggerRatioEffective() float64 {
+	v := c.SummarizationTriggerRatio
+	if v <= 0 {
+		return 0.8
+	}
+	if v < 0.5 {
+		return 0.5
+	}
+	if v > 0.95 {
+		return 0.95
+	}
+	return v
+}
+
+func (c MultiAgentEinoMiddlewareConfig) SummarizationEmitInternalEventsEffective() bool {
+	if c.SummarizationEmitInternalEvents != nil {
+		return *c.SummarizationEmitInternalEvents
+	}
+	return true
+}
+
+func (c MultiAgentEinoMiddlewareConfig) HistoryInputBudgetRatioEffective() float64 {
+	v := c.HistoryInputBudgetRatio
+	if v <= 0 {
+		return 0.35
+	}
+	if v < 0.15 {
+		return 0.15
+	}
+	if v > 0.6 {
+		return 0.6
+	}
+	return v
+}
+
+func (c MultiAgentEinoMiddlewareConfig) PlanExecuteUserInputBudgetRatioEffective() float64 {
+	v := c.PlanExecuteUserInputBudgetRatio
+	if v <= 0 {
+		return 0.35
+	}
+	if v < 0.1 {
+		return 0.1
+	}
+	if v > 0.6 {
+		return 0.6
+	}
+	return v
+}
+
+func (c MultiAgentEinoMiddlewareConfig) PlanExecuteExecutedStepsBudgetRatioEffective() float64 {
+	v := c.PlanExecuteExecutedStepsBudgetRatio
+	if v <= 0 {
+		return 0.2
+	}
+	if v < 0.08 {
+		return 0.08
+	}
+	if v > 0.5 {
+		return 0.5
+	}
+	return v
+}
+
+func (c MultiAgentEinoMiddlewareConfig) PlanExecuteMaxStepResultRunesEffective() int {
+	if c.PlanExecuteMaxStepResultRunes > 0 {
+		return c.PlanExecuteMaxStepResultRunes
+	}
+	return 4000
+}
+
+func (c MultiAgentEinoMiddlewareConfig) PlanExecuteKeepLastStepsEffective() int {
+	if c.PlanExecuteKeepLastSteps > 0 {
+		return c.PlanExecuteKeepLastSteps
+	}
+	return 8
+}
+
+func (c MultiAgentEinoMiddlewareConfig) ReductionMaxLengthForTruncEffective() int {
+	if c.ReductionMaxLengthForTrunc > 0 {
+		return c.ReductionMaxLengthForTrunc
+	}
+	return 12000
+}
+
+func (c MultiAgentEinoMiddlewareConfig) ReductionMaxTokensForClearEffective() int {
+	if c.ReductionMaxTokensForClear > 0 {
+		return c.ReductionMaxTokensForClear
+	}
+	return 50000
 }
 
 // MultiAgentEinoSkillsConfig toggles Eino official skill progressive disclosure and host filesystem tools.
@@ -137,6 +246,8 @@ type MultiAgentPublic struct {
 	SubAgentCount                int    `json:"sub_agent_count"`
 	Orchestration                string `json:"orchestration,omitempty"`
 	PlanExecuteLoopMaxIterations int    `json:"plan_execute_loop_max_iterations"`
+	ToolSearchAlwaysVisibleTools []string `json:"tool_search_always_visible_tools,omitempty"`
+	ToolSearchAlwaysVisibleEffectiveTools []string `json:"tool_search_always_visible_effective_tools,omitempty"`
 }
 
 // NormalizeMultiAgentOrchestration 返回 deep、plan_execute 或 supervisor。
@@ -158,6 +269,7 @@ type MultiAgentAPIUpdate struct {
 	RobotUseMultiAgent           bool `json:"robot_use_multi_agent"`
 	BatchUseMultiAgent           bool `json:"batch_use_multi_agent"`
 	PlanExecuteLoopMaxIterations *int `json:"plan_execute_loop_max_iterations,omitempty"`
+	ToolSearchAlwaysVisibleTools []string `json:"tool_search_always_visible_tools,omitempty"`
 }
 
 // RobotsConfig 机器人配置（企业微信、钉钉、飞书等）

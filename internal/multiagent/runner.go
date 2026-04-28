@@ -237,7 +237,7 @@ func RunDeepAgent(
 				subMax = subDefaultIter
 			}
 
-			subSumMw, err := newEinoSummarizationMiddleware(ctx, subModel, appCfg, logger)
+			subSumMw, err := newEinoSummarizationMiddleware(ctx, subModel, appCfg, &ma.EinoMiddleware, conversationID, logger)
 			if err != nil {
 				return nil, fmt.Errorf("子代理 %q summarization 中间件: %w", id, err)
 			}
@@ -257,6 +257,9 @@ func RunDeepAgent(
 				subHandlers = append(subHandlers, einoSkillMW)
 			}
 			subHandlers = append(subHandlers, subSumMw)
+			if teleMw := newEinoModelInputTelemetryMiddleware(logger, appCfg.OpenAI.Model, conversationID, "sub_agent"); teleMw != nil {
+				subHandlers = append(subHandlers, teleMw)
+			}
 
 			sa, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 				Name:        id,
@@ -289,7 +292,7 @@ func RunDeepAgent(
 		return nil, fmt.Errorf("多代理主模型: %w", err)
 	}
 
-	mainSumMw, err := newEinoSummarizationMiddleware(ctx, mainModel, appCfg, logger)
+	mainSumMw, err := newEinoSummarizationMiddleware(ctx, mainModel, appCfg, &ma.EinoMiddleware, conversationID, logger)
 	if err != nil {
 		return nil, fmt.Errorf("多代理主 summarization 中间件: %w", err)
 	}
@@ -352,6 +355,9 @@ func RunDeepAgent(
 		deepHandlers = append(deepHandlers, einoSkillMW)
 	}
 	deepHandlers = append(deepHandlers, mainSumMw)
+	if teleMw := newEinoModelInputTelemetryMiddleware(logger, appCfg.OpenAI.Model, conversationID, "deep_orchestrator"); teleMw != nil {
+		deepHandlers = append(deepHandlers, teleMw)
+	}
 
 	supHandlers := []adk.ChatModelAgentMiddleware{}
 	if len(mainOrchestratorPre) > 0 {
@@ -361,6 +367,9 @@ func RunDeepAgent(
 		supHandlers = append(supHandlers, einoSkillMW)
 	}
 	supHandlers = append(supHandlers, mainSumMw)
+	if teleMw := newEinoModelInputTelemetryMiddleware(logger, appCfg.OpenAI.Model, conversationID, "supervisor_orchestrator"); teleMw != nil {
+		supHandlers = append(supHandlers, teleMw)
+	}
 
 	mainToolsCfg := adk.ToolsConfig{
 		ToolsNodeConfig: compose.ToolsNodeConfig{
@@ -399,10 +408,17 @@ func RunDeepAgent(
 			ExecMaxIter:          deepMaxIter,
 			LoopMaxIter:          ma.PlanExecuteLoopMaxIterations,
 			AppCfg:               appCfg,
+			MwCfg:                &ma.EinoMiddleware,
+			ConversationID:       conversationID,
 			Logger:               logger,
+			ModelName:            appCfg.OpenAI.Model,
 			ExecPreMiddlewares:   mainOrchestratorPre,
 			SkillMiddleware:      einoSkillMW,
 			FilesystemMiddleware: peFsMw,
+			PlannerReplannerRewriteHandlers: []adk.ChatModelAgentMiddleware{
+				mainSumMw,
+				newEinoModelInputTelemetryMiddleware(logger, appCfg.OpenAI.Model, conversationID, "plan_execute_planner_replanner_rewrite"),
+			},
 		})
 		if perr != nil {
 			return nil, perr
@@ -468,7 +484,7 @@ func RunDeepAgent(
 		da = dDeep
 	}
 
-	baseMsgs := historyToMessages(history)
+	baseMsgs := historyToMessages(history, appCfg, &ma.EinoMiddleware)
 	baseMsgs = append(baseMsgs, schema.UserMessage(userMessage))
 
 	streamsMainAssistant := func(agent string) bool {
@@ -505,33 +521,76 @@ func RunDeepAgent(
 	}, baseMsgs)
 }
 
-func historyToMessages(history []agent.ChatMessage) []adk.Message {
+func historyToMessages(history []agent.ChatMessage, appCfg *config.Config, mwCfg *config.MultiAgentEinoMiddlewareConfig) []adk.Message {
 	if len(history) == 0 {
 		return nil
 	}
-	// 放宽条数上限：跨轮历史交给 Eino Summarization（阈值对齐 openai.max_total_tokens）在调用模型前压缩，避免在入队前硬截断为 40 条。
-	const maxHistoryMessages = 300
+	// Keep a bounded tail first; then enforce a token budget.
+	const maxHistoryMessages = 200
 	start := 0
 	if len(history) > maxHistoryMessages {
 		start = len(history) - maxHistoryMessages
 	}
-	out := make([]adk.Message, 0, len(history[start:]))
+	raw := make([]adk.Message, 0, len(history[start:]))
 	for _, h := range history[start:] {
 		switch h.Role {
 		case "user":
 			if strings.TrimSpace(h.Content) != "" {
-				out = append(out, schema.UserMessage(h.Content))
+				raw = append(raw, schema.UserMessage(h.Content))
 			}
 		case "assistant":
 			if strings.TrimSpace(h.Content) == "" && len(h.ToolCalls) > 0 {
 				continue
 			}
 			if strings.TrimSpace(h.Content) != "" {
-				out = append(out, schema.AssistantMessage(h.Content, nil))
+				raw = append(raw, schema.AssistantMessage(h.Content, nil))
 			}
 		default:
 			continue
 		}
+	}
+	if len(raw) == 0 {
+		return raw
+	}
+	maxTotal := 120000
+	modelName := "gpt-4o"
+	if appCfg != nil {
+		if appCfg.OpenAI.MaxTotalTokens > 0 {
+			maxTotal = appCfg.OpenAI.MaxTotalTokens
+		}
+		if m := strings.TrimSpace(appCfg.OpenAI.Model); m != "" {
+			modelName = m
+		}
+	}
+	ratio := 0.35
+	if mwCfg != nil {
+		ratio = mwCfg.HistoryInputBudgetRatioEffective()
+	}
+	budget := int(float64(maxTotal) * ratio)
+	if budget < 4096 {
+		budget = 4096
+	}
+	tc := agent.NewTikTokenCounter()
+	outRev := make([]adk.Message, 0, len(raw))
+	used := 0
+	for i := len(raw) - 1; i >= 0; i-- {
+		msg := raw[i]
+		n, err := tc.Count(modelName, string(msg.Role)+"\n"+msg.Content)
+		if err != nil {
+			n = (len(msg.Content) + 3) / 4
+		}
+		if n <= 0 {
+			n = 1
+		}
+		if used+n > budget {
+			break
+		}
+		used += n
+		outRev = append(outRev, msg)
+	}
+	out := make([]adk.Message, 0, len(outRev))
+	for i := len(outRev) - 1; i >= 0; i-- {
+		out = append(out, outRev[i])
 	}
 	return out
 }

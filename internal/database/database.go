@@ -3,6 +3,8 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -21,7 +23,8 @@ func configureDBPool(db *sql.DB) {
 // DB 数据库连接
 type DB struct {
 	*sql.DB
-	logger *zap.Logger
+	logger                   *zap.Logger
+	conversationArtifactsDir string
 }
 
 // NewDB 创建数据库连接
@@ -40,6 +43,13 @@ func NewDB(dbPath string, logger *zap.Logger) (*DB, error) {
 	database := &DB{
 		DB:     db,
 		logger: logger,
+	}
+	// Keep conversation-scoped artifacts near database files, so cleanup can follow conversation lifecycle.
+	baseDir := filepath.Join(filepath.Dir(dbPath), "conversation_artifacts")
+	if mkErr := os.MkdirAll(baseDir, 0o755); mkErr == nil {
+		database.conversationArtifactsDir = baseDir
+	} else if logger != nil {
+		logger.Warn("创建 conversation artifacts 目录失败", zap.String("dir", baseDir), zap.Error(mkErr))
 	}
 
 	// 初始化表

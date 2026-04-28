@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -415,6 +417,14 @@ func (db *DB) DeleteConversation(id string) error {
 	_, err = db.Exec("DELETE FROM conversations WHERE id = ?", id)
 	if err != nil {
 		return fmt.Errorf("删除对话失败: %w", err)
+	}
+	// Best-effort cleanup for conversation-scoped filesystem artifacts
+	// (e.g., summarization transcript, reduction/checkpoint files under conversation_artifacts/<id>).
+	if base := strings.TrimSpace(db.conversationArtifactsDir); base != "" {
+		artDir := filepath.Join(base, id)
+		if rmErr := os.RemoveAll(artDir); rmErr != nil {
+			db.logger.Warn("删除会话 artifacts 目录失败", zap.String("conversationId", id), zap.String("dir", artDir), zap.Error(rmErr))
+		}
 	}
 
 	db.logger.Info("对话及其所有相关数据已删除", zap.String("conversationId", id))

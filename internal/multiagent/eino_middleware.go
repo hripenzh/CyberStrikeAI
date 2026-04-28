@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"cyberstrike-ai/internal/config"
+	"cyberstrike-ai/internal/mcp/builtin"
 
 	localbk "github.com/cloudwego/eino-ext/adk/backend/local"
 	"github.com/cloudwego/eino/adk"
@@ -65,6 +66,66 @@ func splitToolsForToolSearch(all []tool.BaseTool, alwaysVisible int) (static []t
 	return append([]tool.BaseTool(nil), all[:alwaysVisible]...), append([]tool.BaseTool(nil), all[alwaysVisible:]...), true
 }
 
+func splitToolsForToolSearchByNames(all []tool.BaseTool, names []string, fallbackAlwaysVisible int) (static []tool.BaseTool, dynamic []tool.BaseTool, ok bool) {
+	nameSet := make(map[string]struct{}, len(names))
+	for _, n := range names {
+		n = strings.TrimSpace(strings.ToLower(n))
+		if n == "" {
+			continue
+		}
+		nameSet[n] = struct{}{}
+	}
+	if len(nameSet) == 0 {
+		return splitToolsForToolSearch(all, fallbackAlwaysVisible)
+	}
+	static = make([]tool.BaseTool, 0, len(all))
+	dynamic = make([]tool.BaseTool, 0, len(all))
+	for _, t := range all {
+		if t == nil {
+			continue
+		}
+		info, err := t.Info(context.Background())
+		name := ""
+		if err == nil && info != nil {
+			name = strings.TrimSpace(strings.ToLower(info.Name))
+		}
+		if _, keep := nameSet[name]; keep {
+			static = append(static, t)
+			continue
+		}
+		dynamic = append(dynamic, t)
+	}
+	if len(static) == 0 || len(dynamic) == 0 {
+		// fallback: preserve previous behavior when whitelist misses all or includes all.
+		return splitToolsForToolSearch(all, fallbackAlwaysVisible)
+	}
+	return static, dynamic, true
+}
+
+func mergeAlwaysVisibleToolNames(configured []string) []string {
+	merged := make([]string, 0, len(configured)+32)
+	seen := make(map[string]struct{}, len(configured)+32)
+	add := func(name string) {
+		n := strings.TrimSpace(strings.ToLower(name))
+		if n == "" {
+			return
+		}
+		if _, ok := seen[n]; ok {
+			return
+		}
+		seen[n] = struct{}{}
+		merged = append(merged, n)
+	}
+	for _, n := range configured {
+		add(n)
+	}
+	// Always include hardcoded backend builtin MCP tools from constants.
+	for _, n := range builtin.GetAllBuiltinTools() {
+		add(n)
+	}
+	return merged
+}
+
 func buildReductionMiddleware(ctx context.Context, mw config.MultiAgentEinoMiddlewareConfig, convID string, loc *localbk.Local, logger *zap.Logger) (adk.ChatModelAgentMiddleware, error) {
 	if loc == nil {
 		return nil, fmt.Errorf("reduction: local backend nil")
@@ -87,6 +148,8 @@ func buildReductionMiddleware(ctx context.Context, mw config.MultiAgentEinoMiddl
 		RootDir:           root,
 		ReadFileToolName:  "read_file",
 		ClearExcludeTools: excl,
+		MaxLengthForTrunc: mw.ReductionMaxLengthForTruncEffective(),
+		MaxTokensForClear: int64(mw.ReductionMaxTokensForClearEffective()),
 	})
 	if err != nil {
 		return nil, err
@@ -142,7 +205,7 @@ func prependEinoMiddlewares(
 		alwaysVis = 12
 	}
 	if mw.ToolSearchEnable && len(tools) >= minTools {
-		static, dynamic, split := splitToolsForToolSearch(tools, alwaysVis)
+		static, dynamic, split := splitToolsForToolSearchByNames(tools, mergeAlwaysVisibleToolNames(mw.ToolSearchAlwaysVisibleTools), alwaysVis)
 		if split && len(dynamic) > 0 {
 			ts, terr := toolsearch.New(ctx, &toolsearch.Config{DynamicTools: dynamic})
 			if terr != nil {
