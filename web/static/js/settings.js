@@ -1264,7 +1264,7 @@ async function saveToolsConfig() {
                 robot_use_multi_agent: currentConfig?.multi_agent?.robot_use_multi_agent === true,
                 batch_use_multi_agent: currentConfig?.multi_agent?.batch_use_multi_agent === true,
                 plan_execute_loop_max_iterations: Number(currentConfig?.multi_agent?.plan_execute_loop_max_iterations || 0),
-                tool_search_always_visible_tools: Array.from(alwaysVisibleToolNames)
+                tool_search_always_visible_tools: Array.from(alwaysVisibleToolNames).filter(name => !alwaysVisibleBuiltinToolNames.has(name))
             },
             tools: []
         };
