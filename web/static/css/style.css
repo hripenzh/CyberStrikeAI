@@ -4472,6 +4472,25 @@ header {
     flex-wrap: wrap;
 }
 
+.tool-resident-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 2px 8px;
+    background: var(--bg-secondary);
+    cursor: pointer;
+}
+
+.tool-resident-toggle input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    margin: 0;
+}
+
 .external-tool-badge {
     display: inline-flex;
     align-items: center;

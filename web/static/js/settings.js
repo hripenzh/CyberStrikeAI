@@ -1,6 +1,8 @@
 // 设置相关功能
 let currentConfig = null;
 let allTools = [];
+let alwaysVisibleToolNames = new Set();
+let alwaysVisibleBuiltinToolNames = new Set();
 // 全局工具状态映射，用于保存用户在所有页面的修改
 // key: 唯一工具标识符（toolKey），value: { enabled: boolean, is_external: boolean, external_mcp: string }
 let toolStateMap = new Map();
@@ -100,6 +102,14 @@ async function loadConfig(loadTools = true) {
         }
         
         currentConfig = await response.json();
+        const alwaysVisibleList = currentConfig?.multi_agent?.tool_search_always_visible_effective_tools;
+        const alwaysVisibleConfigured = currentConfig?.multi_agent?.tool_search_always_visible_tools;
+        alwaysVisibleToolNames = new Set(Array.isArray(alwaysVisibleList) ? alwaysVisibleList.filter(Boolean) : []);
+        alwaysVisibleBuiltinToolNames = new Set(
+            alwaysVisibleToolNames.size > 0 && Array.isArray(alwaysVisibleConfigured)
+                ? Array.from(alwaysVisibleToolNames).filter(name => !alwaysVisibleConfigured.includes(name))
+                : []
+        );
         
         // 填充OpenAI配置
         const providerEl = document.getElementById('openai-provider');
@@ -498,6 +508,8 @@ function renderToolsList() {
             is_external: tool.is_external || false,
             external_mcp: tool.external_mcp || ''
         };
+        const alwaysVisibleChecked = alwaysVisibleToolNames.has(tool.name);
+        const alwaysVisibleLocked = alwaysVisibleBuiltinToolNames.has(tool.name);
         
         // 外部工具标签，显示来源信息（可点击跳转到对应 MCP 卡片）
         let externalBadge = '';
@@ -521,6 +533,11 @@ function renderToolsList() {
                 <div class="tool-item-name">
                     ${escapeHtml(tool.name)}
                     ${externalBadge}
+                    <label class="tool-resident-toggle" title="${typeof window.t === 'function' ? window.t('mcp.alwaysVisibleHint') : '始终常驻在 Tool Search 可见列表'}" onclick="event.stopPropagation()">
+                        <input type="checkbox" ${alwaysVisibleChecked ? 'checked' : ''} ${alwaysVisibleLocked ? 'disabled' : ''} onchange="handleToolAlwaysVisibleChange('${escapeHtml(tool.name)}', this.checked)" />
+                        <span>${typeof window.t === 'function' ? window.t('mcp.alwaysVisibleLabel') : '常驻'}</span>
+                    </label>
+                    ${alwaysVisibleLocked ? `<span class="external-tool-badge" title="${typeof window.t === 'function' ? window.t('mcp.alwaysVisibleBuiltinHint') : '后端内置工具默认常驻，不可关闭'}">${typeof window.t === 'function' ? window.t('mcp.alwaysVisibleBuiltinLabel') : '内置默认'}</span>` : ''}
                     <span class="tool-expand-icon">▶</span>
                 </div>
                 <div class="tool-item-desc">${escapeHtml(tool.description || (typeof window.t === 'function' ? window.t('mcp.noDescription') : '无描述'))}</div>
@@ -716,6 +733,16 @@ function handleToolCheckboxChange(toolKey, enabled) {
     updateToolsStats();
 }
 
+function handleToolAlwaysVisibleChange(toolName, alwaysVisible) {
+    const name = (toolName || '').trim();
+    if (!name) return;
+    if (alwaysVisible) {
+        alwaysVisibleToolNames.add(name);
+    } else {
+        alwaysVisibleToolNames.delete(name);
+    }
+}
+
 // 全选工具
 function selectAllTools() {
     document.querySelectorAll('#tools-list input[type="checkbox"]').forEach(checkbox => {
@@ -886,9 +913,11 @@ async function updateToolsStats() {
     }
     
     const tStats = typeof window.t === 'function' ? window.t : (k) => k;
+    const pinnedCount = alwaysVisibleToolNames.size;
     statsEl.innerHTML = `
         <span title="${tStats('mcp.currentPageEnabled')}">✅ ${tStats('mcp.currentPageEnabled')}: <strong>${currentPageEnabled}</strong> / ${currentPageTotal}</span>
         <span title="${tStats('mcp.totalEnabled')}">📊 ${tStats('mcp.totalEnabled')}: <strong>${totalEnabled}</strong> / ${totalTools}</span>
+        <span title="${tStats('mcp.alwaysVisibleHint')}">📌 ${tStats('mcp.alwaysVisibleLabel')}: <strong>${pinnedCount}</strong></span>
     `;
 }
 
@@ -1230,6 +1259,13 @@ async function saveToolsConfig() {
         const config = {
             openai: currentConfig.openai || {},
             agent: currentConfig.agent || {},
+            multi_agent: {
+                enabled: currentConfig?.multi_agent?.enabled === true,
+                robot_use_multi_agent: currentConfig?.multi_agent?.robot_use_multi_agent === true,
+                batch_use_multi_agent: currentConfig?.multi_agent?.batch_use_multi_agent === true,
+                plan_execute_loop_max_iterations: Number(currentConfig?.multi_agent?.plan_execute_loop_max_iterations || 0),
+                tool_search_always_visible_tools: Array.from(alwaysVisibleToolNames)
+            },
             tools: []
         };
         
