@@ -505,10 +505,34 @@ function setKpiRateBadge(id, rate, failedCount) {
     }
 }
 
+// sessionStorage：告警条「×」忽略记录 + 最近一次**实际展示过**的 reason 片段（不含 level），
+// 用于在「问题从多变少」（如审完 HITL 后只剩严重漏洞）时，避免误用更早对「仅子集」的忽略。
+var DASH_SESSION_ALERT_DISMISSED = 'dashboard.dismissedAlert';
+var DASH_SESSION_ALERT_LAST_REASONS = 'dashboard.alertLastReasons';
+
+function dashboardAlertReasonKeySetFromJoined(s) {
+    if (!s || typeof s !== 'string') return new Set();
+    return new Set(s.split(',').map(function (x) { return x.trim(); }).filter(Boolean));
+}
+
+/** 当前 reason 片段相对上次展示的片段是否为真子集（用于清除过时的忽略） */
+function dashboardAlertCurrentIsStrictSubsetOfLastShown(currentReasonJoined, lastReasonJoined) {
+    var cur = dashboardAlertReasonKeySetFromJoined(currentReasonJoined);
+    var last = dashboardAlertReasonKeySetFromJoined(lastReasonJoined);
+    if (cur.size === 0 || last.size === 0) return false;
+    if (cur.size >= last.size) return false;
+    var ok = true;
+    cur.forEach(function (k) {
+        if (!last.has(k)) ok = false;
+    });
+    return ok;
+}
+
 // 关键提醒条：根据严重情况渲染或隐藏。
 //   - level: danger（红） > warning（橙） > info（蓝），按 reasons 自动取最高级
 //   - 用户点 × 后，把当前 reasons 指纹存入 sessionStorage，本会话内再出现完全相同的内容会自动跳过
 //   - 当 reasons 集合发生变化（如又新增一类问题），指纹失效，banner 重新弹出，避免「忽略后永远不再提醒」
+//   - 若曾展示过「更多类问题」的组合，之后仅部分问题消失，即使指纹与早年忽略相同，也会清除忽略并继续提醒（见 dashboard.alertLastReasons）
 function renderDashboardAlertBanner(stats) {
     const banner = document.getElementById('dashboard-alert-banner');
     const titleEl = document.getElementById('dashboard-alert-title');
@@ -552,15 +576,28 @@ function renderDashboardAlertBanner(stats) {
         banner.hidden = true;
         banner.classList.remove('is-warning', 'is-danger', 'is-info');
         dashboardState.dismissedAlertKey = null;
+        try { sessionStorage.removeItem(DASH_SESSION_ALERT_LAST_REASONS); } catch (_) {}
         return;
     }
 
     var fingerprint = level + '|' + reasonKeys.join(',');
+    var reasonPartJoined = reasonKeys.join(',');
+
+    // 检查是否被本会话忽略过同样的内容；若当前仅为「上次曾展示组合」的真子集，则清除忽略（最佳实践：部分处置后仍提醒剩余项）
+    var dismissed = null;
+    try { dismissed = sessionStorage.getItem(DASH_SESSION_ALERT_DISMISSED); } catch (_) {}
+    var lastShownReasons = '';
+    try { lastShownReasons = sessionStorage.getItem(DASH_SESSION_ALERT_LAST_REASONS) || ''; } catch (_) {}
+
+    if (dismissed === fingerprint && dashboardAlertCurrentIsStrictSubsetOfLastShown(reasonPartJoined, lastShownReasons)) {
+        try {
+            sessionStorage.removeItem(DASH_SESSION_ALERT_DISMISSED);
+            dismissed = null;
+        } catch (_) { /* ignore */ }
+    }
+
     dashboardState.dismissedAlertKey = fingerprint;
 
-    // 检查是否被本会话忽略过同样的内容
-    var dismissed = null;
-    try { dismissed = sessionStorage.getItem('dashboard.dismissedAlert'); } catch (_) {}
     if (dismissed === fingerprint) {
         banner.hidden = true;
         return;
@@ -609,6 +646,8 @@ function renderDashboardAlertBanner(stats) {
         btn.onclick = function () { try { switchPage('mcp-management'); } catch (e) {} };
         actsEl.appendChild(btn);
     }
+
+    try { sessionStorage.setItem(DASH_SESSION_ALERT_LAST_REASONS, reasonPartJoined); } catch (_) {}
 }
 
 // External MCP 健康度：从 /api/external-mcp/stats 解析出 running / total / down，
@@ -1378,7 +1417,7 @@ document.addEventListener('click', function (ev) {
     if (!btn) return;
     ev.preventDefault();
     var key = dashboardState.dismissedAlertKey || '';
-    try { sessionStorage.setItem('dashboard.dismissedAlert', key); } catch (_) {}
+    try { sessionStorage.setItem(DASH_SESSION_ALERT_DISMISSED, key); } catch (_) {}
     var banner = document.getElementById('dashboard-alert-banner');
     if (banner) banner.hidden = true;
 });
