@@ -151,6 +151,74 @@
         return div.innerHTML;
     }
 
+    /** 监听器表单：Malleable Profile 下拉选项 HTML（value / 文本已转义） */
+    function listenerProfileSelectHtml(selectedProfileId) {
+        const sel = selectedProfileId ? String(selectedProfileId) : '';
+        let opts = `<option value="">${escapeHtml(c2t('c2.listeners.malleableProfileNone'))}</option>`;
+        for (const p of (C2.profiles || [])) {
+            if (!p) continue;
+            const pid = p.id || p.ID;
+            if (!pid) continue;
+            const idEsc = escapeHtml(String(pid));
+            const nameEsc = escapeHtml(p.name || pid);
+            const selected = sel && String(pid) === sel ? ' selected' : '';
+            opts += `<option value="${idEsc}"${selected}>${nameEsc}</option>`;
+        }
+        return opts;
+    }
+
+    function listenerResolvedProfileId(l) {
+        if (!l) return '';
+        const v = l.profileId != null && l.profileId !== '' ? l.profileId : l.profile_id;
+        return v != null ? String(v).trim() : '';
+    }
+
+    /** 监听器卡片展示用 Profile 名称（依赖 C2.profiles，由 loadListeners 一并拉取） */
+    function listenerProfileDisplayName(l) {
+        const pid = listenerResolvedProfileId(l);
+        if (!pid) return '';
+        const list = C2.profiles || [];
+        for (let i = 0; i < list.length; i++) {
+            const p = list[i];
+            if (p && (p.id === pid || p.ID === pid)) return String(p.name || p.id || pid).trim() || pid;
+        }
+        return pid.length > 18 ? pid.substring(0, 16) + '…' : pid;
+    }
+
+    function listenerTypeVisualClass(type) {
+        const t = String(type || '').toLowerCase();
+        if (t === 'https_beacon') return 'c2-ltype-mark--https';
+        if (t === 'http_beacon') return 'c2-ltype-mark--http';
+        if (t === 'tcp_reverse') return 'c2-ltype-mark--tcp';
+        if (t === 'websocket') return 'c2-ltype-mark--ws';
+        return 'c2-ltype-mark--def';
+    }
+
+    function listenerTypeShortLabel(type) {
+        const t = String(type || '').toLowerCase();
+        if (t === 'https_beacon') return 'HTTPS';
+        if (t === 'http_beacon') return 'HTTP';
+        if (t === 'tcp_reverse') return 'TCP';
+        if (t === 'websocket') return 'WS';
+        return '?';
+    }
+
+    function listenerCardStatusPillLabel(status) {
+        const s = String(status || '').toLowerCase();
+        if (s === 'running') return c2t('c2.listeners.running');
+        if (s === 'stopped') return c2t('c2.listeners.stopped');
+        if (s === 'error') return c2t('c2.listeners.statusError');
+        return c2t('c2.listeners.stopped');
+    }
+
+    /** 避免 i18n 插值把日期里的「/」转成 &#x2F;，与 formatTime 拼接后整体转义 */
+    function formatListenerStartedHtml(dateStr) {
+        if (!dateStr) return '';
+        const prefix = c2t('c2.listeners.startedAtPrefix');
+        const time = formatTime(dateStr);
+        return '<div class="c2-listener-meta-row"><span class="c2-listener-meta-label">' + escapeHtml(prefix) + '</span> <span class="c2-listener-meta-time">' + escapeHtml(time) + '</span></div>';
+    }
+
     function copyToClipboard(text) {
         if (navigator.clipboard) {
             navigator.clipboard.writeText(text).then(() => showToast(c2t('c2.clipboardCopied'), 'success'));
@@ -204,10 +272,30 @@
     // ============================================================================
 
     C2.loadListeners = function() {
-        apiRequest('GET', `${API_BASE}/listeners`).then(data => {
-            C2.listeners = data.listeners || [];
+        Promise.all([
+            apiRequest('GET', `${API_BASE}/listeners`),
+            apiRequest('GET', `${API_BASE}/profiles`).catch(function() { return {}; })
+        ]).then(function(results) {
+            var ldata = results[0];
+            var pdata = results[1];
+            C2.listeners = (ldata && ldata.listeners) || [];
+            if (pdata && pdata.profiles && !pdata.error) {
+                C2.profiles = pdata.profiles;
+            }
             C2.renderListeners();
             C2.updateDashboardStats();
+        });
+    };
+
+    /** 拉取 Profile 列表（监听器表单用）；失败时置空列表不阻断弹窗 */
+    C2.ensureProfilesLoaded = function() {
+        return apiRequest('GET', `${API_BASE}/profiles`).then(data => {
+            if (data && data.error) {
+                C2.profiles = [];
+                return C2.profiles;
+            }
+            C2.profiles = (data && data.profiles) || [];
+            return C2.profiles;
         });
     };
 
@@ -233,33 +321,60 @@
             return;
         }
 
-        container.innerHTML = C2.listeners.map(l => `
-            <div class="c2-listener-card ${l.status}">
-                <div class="c2-listener-header">
-                    <div>
-                        <div class="c2-listener-name">${escapeHtml(l.name)}</div>
-                        <div class="c2-listener-id">${l.id.substring(0, 12)}...</div>
+        container.innerHTML = C2.listeners.map(function(l) {
+            const st = String(l.status || 'stopped').toLowerCase();
+            const stUi = st === 'running' || st === 'stopped' || st === 'error' ? st : 'stopped';
+            const profilePid = listenerResolvedProfileId(l);
+            const profileName = listenerProfileDisplayName(l);
+            const profileBadge = profilePid
+                ? '<div class="c2-listener-profile-badge" title="' + escapeHtml(c2t('c2.listeners.profileBadgeTitle')) + '"><span class="c2-listener-profile-dot" aria-hidden="true"></span><span>' + escapeHtml(profileName) + '</span></div>'
+                : '';
+            const cb = C2.getListenerCallbackHost(l);
+            const cbRow = cb
+                ? '<div class="c2-listener-kv"><span class="c2-listener-kv-label">' + escapeHtml(c2t('c2.listeners.callbackShort')) + '</span><span class="c2-listener-kv-val c2-listener-mono">' + escapeHtml(cb) + '</span></div>'
+                : '';
+            const remarkRow = l.remark ? '<div class="c2-listener-remark">' + escapeHtml(l.remark) + '</div>' : '';
+            const startedHtml = formatListenerStartedHtml(l.startedAt);
+            const pillLabel = escapeHtml(listenerCardStatusPillLabel(st));
+            const typeMark = escapeHtml(listenerTypeShortLabel(l.type));
+            const typeVis = listenerTypeVisualClass(l.type);
+            const fullType = escapeHtml(listenerTypeLabel(l.type));
+            const bindVal = escapeHtml(String(l.bindHost)) + ':' + escapeHtml(String(l.bindPort));
+
+            return `
+            <article class="c2-listener-card c2-listener-card--${stUi}" data-listener-id="${escapeHtml(l.id)}">
+                <div class="c2-listener-card-head">
+                    <div class="c2-ltype-mark ${typeVis}" title="${fullType}"><span>${typeMark}</span></div>
+                    <div class="c2-listener-card-head-main">
+                        <div class="c2-listener-card-title-row">
+                            <h3 class="c2-listener-name">${escapeHtml(l.name)}</h3>
+                            <span class="c2-listener-pill c2-listener-pill--${stUi}">${pillLabel}</span>
+                        </div>
+                        <div class="c2-listener-id-row">
+                            <code class="c2-listener-id-full" title="${escapeHtml(l.id)}">${escapeHtml(l.id)}</code>
+                        </div>
                     </div>
-                    <span class="c2-listener-type">${escapeHtml(listenerTypeLabel(l.type))}</span>
                 </div>
-                <div class="c2-listener-info">
-                    <div class="c2-listener-address">
-                        <span class="c2-status-dot ${l.status}"></span>
-                        <strong>${l.bindHost}:${l.bindPort}</strong>
+                <div class="c2-listener-card-body">
+                    <div class="c2-listener-kv">
+                        <span class="c2-listener-kv-label">${escapeHtml(c2t('c2.listeners.bindEndpoint'))}</span>
+                        <span class="c2-listener-kv-val c2-listener-mono"><span class="c2-status-dot ${escapeHtml(st)}"></span>${bindVal}</span>
                     </div>
-                    ${l.startedAt ? `<div style="font-size:12px;margin-top:4px;">${escapeHtml(c2t('c2.listeners.startedAt', { time: formatTime(l.startedAt) }))}</div>` : ''}
-                    ${l.remark ? `<div style="font-size:12px;margin-top:2px;opacity:0.7;">${escapeHtml(l.remark)}</div>` : ''}
+                    ${cbRow}
+                    ${profileBadge}
+                    ${remarkRow}
+                    ${startedHtml}
                 </div>
-                <div class="c2-listener-actions">
-                    ${l.status === 'stopped' 
-                        ? `<button class="btn-primary btn-sm" onclick="C2.startListener('${l.id}')">▶ ${escapeHtml(c2t('c2.listeners.start'))}</button>`
-                        : `<button class="btn-secondary btn-sm" onclick="C2.stopListener('${l.id}')">⏹ ${escapeHtml(c2t('c2.listeners.stop'))}</button>`
+                <div class="c2-listener-card-actions">
+                    ${l.status === 'stopped'
+                        ? `<button type="button" class="btn-primary btn-sm" onclick="C2.startListener('${l.id}')">▶ ${escapeHtml(c2t('c2.listeners.start'))}</button>`
+                        : `<button type="button" class="btn-secondary btn-sm" onclick="C2.stopListener('${l.id}')">⏹ ${escapeHtml(c2t('c2.listeners.stop'))}</button>`
                     }
-                    <button class="btn-ghost btn-sm" onclick="C2.editListener('${l.id}')">${escapeHtml(c2t('c2.listeners.edit'))}</button>
-                    <button class="btn-danger btn-sm" onclick="C2.deleteListener('${l.id}')">${escapeHtml(c2t('c2.listeners.delete'))}</button>
+                    <button type="button" class="btn-secondary btn-sm" onclick="C2.editListener('${l.id}')">${escapeHtml(c2t('c2.listeners.edit'))}</button>
+                    <button type="button" class="btn-danger btn-sm" onclick="C2.deleteListener('${l.id}')">${escapeHtml(c2t('c2.listeners.delete'))}</button>
                 </div>
-            </div>
-        `).join('');
+            </article>`;
+        }).join('');
     };
 
     C2.getListenerCallbackHost = function(l) {
@@ -276,9 +391,25 @@
     C2.showCreateListenerModal = function() {
         const modal = document.getElementById('c2-modal');
         const content = document.getElementById('c2-modal-content');
-        if (!content) return;
+        if (!content || !modal) return;
 
+        modal.style.display = 'flex';
         content.innerHTML = `
+            <div class="c2-modal-header">
+                <h3>${escapeHtml(c2t('c2.listeners.modalCreateTitle'))}</h3>
+                <button class="c2-modal-close" onclick="C2.closeModal()">&times;</button>
+            </div>
+            <div class="c2-modal-body">
+                <p class="form-hint" style="margin-top:0;">${escapeHtml(c2t('c2.listeners.loadingProfiles'))}</p>
+            </div>
+        `;
+
+        C2.ensureProfilesLoaded().then(() => {
+            const profileOpts = listenerProfileSelectHtml('');
+            const emptyProfHintCreate = (C2.profiles && C2.profiles.length > 0)
+                ? ''
+                : `<div class="form-hint" style="margin-bottom:6px;color:#b45309;">${escapeHtml(c2t('c2.listeners.malleableProfileEmptyListHint'))}</div>`;
+            content.innerHTML = `
             <div class="c2-modal-header">
                 <h3>${escapeHtml(c2t('c2.listeners.modalCreateTitle'))}</h3>
                 <button class="c2-modal-close" onclick="C2.closeModal()">&times;</button>
@@ -291,7 +422,7 @@
                     </div>
                     <div class="c2-form-group">
                         <label>${escapeHtml(c2t('c2.listeners.type'))}</label>
-                        <select id="c2-listener-type" class="form-control">
+                        <select id="c2-listener-type" class="form-control c2-native-select" onchange="C2.syncListenerProfileRowForType()">
                             <option value="http_beacon">HTTP Beacon</option>
                             <option value="https_beacon">HTTPS Beacon</option>
                             <option value="tcp_reverse">TCP Reverse</option>
@@ -310,6 +441,12 @@
                         <input type="number" id="c2-listener-port" class="form-control" placeholder="8443">
                     </div>
                 </div>
+                <div class="c2-form-group" id="c2-listener-profile-group">
+                    <label>${escapeHtml(c2t('c2.listeners.malleableProfile'))}</label>
+                    ${emptyProfHintCreate}
+                    <select id="c2-listener-profile-id" class="form-control c2-native-select">${profileOpts}</select>
+                    <div class="form-hint">${escapeHtml(c2t('c2.listeners.malleableProfileHint'))}</div>
+                </div>
                 <div class="c2-form-group">
                     <label>${escapeHtml(c2t('c2.listeners.callbackHost'))}</label>
                     <input type="text" id="c2-listener-callback-host" class="form-control" placeholder="">
@@ -325,7 +462,25 @@
                 <button class="btn-primary" onclick="C2.createListener()">${escapeHtml(c2t('c2.listeners.submitCreate'))}</button>
             </div>
         `;
-        modal.style.display = 'flex';
+            C2.syncListenerProfileRowForType();
+        }).catch(() => {
+            showToast(c2t('c2.listeners.toastProfilesLoadFailed'), 'error');
+            C2.closeModal();
+        });
+    };
+
+    /** 非 HTTP/HTTPS Beacon 时隐藏 Profile 行（避免误以为 TCP 等也会用） */
+    C2.syncListenerProfileRowForType = function() {
+        const typeEl = document.getElementById('c2-listener-type');
+        const row = document.getElementById('c2-listener-profile-group');
+        if (!typeEl || !row) return;
+        const t = String(typeEl.value || '').toLowerCase();
+        const show = t === 'http_beacon' || t === 'https_beacon';
+        row.style.display = show ? '' : 'none';
+        if (!show) {
+            const sel = document.getElementById('c2-listener-profile-id');
+            if (sel) sel.value = '';
+        }
     };
 
     C2.createListener = function() {
@@ -341,9 +496,12 @@
             return;
         }
 
+        const profileId = (document.getElementById('c2-listener-profile-id')?.value || '').trim();
+
         apiRequest('POST', `${API_BASE}/listeners`, {
             name, type, bind_host: bindHost, bind_port: bindPort, remark,
-            callback_host: callbackHost
+            callback_host: callbackHost,
+            profile_id: profileId
         }).then(data => {
             if (data.error) {
                 showToast(data.error, 'error');
@@ -388,12 +546,32 @@
         if (!l) return;
 
         const cbHost = C2.getListenerCallbackHost(l);
-
         const modal = document.getElementById('c2-modal');
         const content = document.getElementById('c2-modal-content');
-        if (!content) return;
+        if (!content || !modal) return;
 
+        modal.style.display = 'flex';
         content.innerHTML = `
+            <div class="c2-modal-header">
+                <h3>${escapeHtml(c2t('c2.listeners.editTitle'))}</h3>
+                <button class="c2-modal-close" onclick="C2.closeModal()">&times;</button>
+            </div>
+            <div class="c2-modal-body">
+                <p class="form-hint" style="margin-top:0;">${escapeHtml(c2t('c2.listeners.loadingProfiles'))}</p>
+            </div>
+        `;
+
+        C2.ensureProfilesLoaded().then(() => {
+            const resolvedPid = listenerResolvedProfileId(l);
+            const profileOpts = listenerProfileSelectHtml(resolvedPid);
+            const lt = String(l.type || '').toLowerCase();
+            const httpHint = (lt === 'http_beacon' || lt === 'https_beacon')
+                ? ''
+                : `<div class="form-hint" style="margin-bottom:6px;">${escapeHtml(c2t('c2.listeners.malleableProfileNonHttpHint'))}</div>`;
+            const emptyProfHint = (C2.profiles && C2.profiles.length > 0)
+                ? ''
+                : `<div class="form-hint" style="margin-bottom:6px;color:#b45309;">${escapeHtml(c2t('c2.listeners.malleableProfileEmptyListHint'))}</div>`;
+            content.innerHTML = `
             <div class="c2-modal-header">
                 <h3>${escapeHtml(c2t('c2.listeners.editTitle'))}</h3>
                 <button class="c2-modal-close" onclick="C2.closeModal()">&times;</button>
@@ -406,12 +584,18 @@
                 <div class="c2-form-row">
                     <div class="c2-form-group">
                         <label>${escapeHtml(c2t('c2.listeners.bindHost'))}</label>
-                        <input type="text" id="c2-listener-host" class="form-control" value="${l.bindHost}">
+                        <input type="text" id="c2-listener-host" class="form-control" value="${escapeHtml(String(l.bindHost))}">
                     </div>
                     <div class="c2-form-group">
                         <label>${escapeHtml(c2t('c2.listeners.bindPort'))}</label>
                         <input type="number" id="c2-listener-port" class="form-control" value="${l.bindPort}">
                     </div>
+                </div>
+                <div class="c2-form-group" id="c2-listener-profile-group">
+                    <label>${escapeHtml(c2t('c2.listeners.malleableProfile'))}</label>
+                    ${httpHint}${emptyProfHint}
+                    <select id="c2-listener-profile-id" class="form-control c2-native-select">${profileOpts}</select>
+                    <div class="form-hint">${escapeHtml(c2t('c2.listeners.malleableProfileHint'))}</div>
                 </div>
                 <div class="c2-form-group">
                     <label>${escapeHtml(c2t('c2.listeners.callbackHost'))}</label>
@@ -428,7 +612,10 @@
                 <button class="btn-primary" onclick="C2.saveListener('${l.id}')">${escapeHtml(c2t('common.save'))}</button>
             </div>
         `;
-        modal.style.display = 'flex';
+        }).catch(() => {
+            showToast(c2t('c2.listeners.toastProfilesLoadFailed'), 'error');
+            C2.closeModal();
+        });
     };
 
     C2.saveListener = function(id) {
@@ -437,10 +624,13 @@
         const bindPort = parseInt(document.getElementById('c2-listener-port')?.value);
         const callbackHost = document.getElementById('c2-listener-callback-host')?.value?.trim() ?? '';
         const remark = document.getElementById('c2-listener-remark')?.value;
+        const profileEl = document.getElementById('c2-listener-profile-id');
+        const profileId = profileEl ? String(profileEl.value || '').trim() : '';
 
         apiRequest('PUT', `${API_BASE}/listeners/${id}`, {
             name, bind_host: bindHost, bind_port: bindPort, remark,
-            callback_host: callbackHost
+            callback_host: callbackHost,
+            profile_id: profileId
         }).then(data => {
             if (data.error) showToast(data.error, 'error');
             else {
