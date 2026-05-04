@@ -41,6 +41,14 @@ type SkillsToolRegistrar func() error
 // BatchTaskToolRegistrar 批量任务 MCP 工具注册器（ApplyConfig 时重新注册）
 type BatchTaskToolRegistrar func() error
 
+// C2ToolRegistrar C2 MCP 工具注册器（ApplyConfig 时 ClearTools 之后调用）
+type C2ToolRegistrar func() error
+
+// C2Runtime ApplyConfig 时按配置启停 C2 子系统（由 internal/app.App 实现）
+type C2Runtime interface {
+	ReconcileC2AfterConfigApply() error
+}
+
 // RetrieverUpdater 检索器更新接口
 type RetrieverUpdater interface {
 	UpdateConfig(config *knowledge.RetrievalConfig)
@@ -73,6 +81,8 @@ type ConfigHandler struct {
 	webshellToolRegistrar      WebshellToolRegistrar      // WebShell 工具注册器（可选）
 	skillsToolRegistrar        SkillsToolRegistrar        // Skills工具注册器（可选）
 	batchTaskToolRegistrar     BatchTaskToolRegistrar     // 批量任务 MCP 工具（可选）
+	c2ToolRegistrar            C2ToolRegistrar            // C2 MCP 工具（可选）
+	c2Runtime                  C2Runtime                  // C2 启停（可选）
 	retrieverUpdater           RetrieverUpdater           // 检索器更新器（可选）
 	knowledgeInitializer       KnowledgeInitializer       // 知识库初始化器（可选）
 	appUpdater                 AppUpdater                 // App更新器（可选）
@@ -154,6 +164,20 @@ func (h *ConfigHandler) SetBatchTaskToolRegistrar(registrar BatchTaskToolRegistr
 	h.batchTaskToolRegistrar = registrar
 }
 
+// SetC2ToolRegistrar 设置 C2 MCP 工具注册器
+func (h *ConfigHandler) SetC2ToolRegistrar(registrar C2ToolRegistrar) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.c2ToolRegistrar = registrar
+}
+
+// SetC2Runtime 设置 C2 运行时（Apply 时启停）
+func (h *ConfigHandler) SetC2Runtime(rt C2Runtime) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.c2Runtime = rt
+}
+
 // SetRetrieverUpdater 设置检索器更新器
 func (h *ConfigHandler) SetRetrieverUpdater(updater RetrieverUpdater) {
 	h.mu.Lock()
@@ -193,6 +217,7 @@ type GetConfigResponse struct {
 	Knowledge  config.KnowledgeConfig  `json:"knowledge"`
 	Robots     config.RobotsConfig     `json:"robots,omitempty"`
 	MultiAgent config.MultiAgentPublic `json:"multi_agent,omitempty"`
+	C2         config.C2Public          `json:"c2"`
 }
 
 // ToolConfigInfo 工具配置信息
@@ -286,6 +311,7 @@ func (h *ConfigHandler) GetConfig(c *gin.Context) {
 		Agent:      h.config.Agent,
 		Hitl:       h.config.Hitl,
 		Knowledge:  h.config.Knowledge,
+		C2:         h.config.C2.Public(),
 		Robots:     h.config.Robots,
 		MultiAgent: multiPub,
 	})
@@ -591,6 +617,7 @@ type UpdateConfigRequest struct {
 	Knowledge  *config.KnowledgeConfig     `json:"knowledge,omitempty"`
 	Robots     *config.RobotsConfig        `json:"robots,omitempty"`
 	MultiAgent *config.MultiAgentAPIUpdate `json:"multi_agent,omitempty"`
+	C2         *config.C2APIUpdate          `json:"c2,omitempty"`
 }
 
 // ToolEnableStatus 工具启用状态
@@ -674,6 +701,12 @@ func (h *ConfigHandler) UpdateConfig(c *gin.Context) {
 			zap.Bool("dingtalk_enabled", h.config.Robots.Dingtalk.Enabled),
 			zap.Bool("lark_enabled", h.config.Robots.Lark.Enabled),
 		)
+	}
+
+	if req.C2 != nil {
+		v := req.C2.Enabled
+		h.config.C2.Enabled = &v
+		h.logger.Info("更新C2配置", zap.Bool("enabled", v))
 	}
 
 	// 多代理标量（sub_agents 等仍由 config.yaml 维护）
@@ -980,6 +1013,18 @@ func (h *ConfigHandler) ApplyConfig(c *gin.Context) {
 		h.logger.Info("知识库组件重新初始化完成")
 	}
 
+	// C2：在 ClearTools 之前按配置启停（随后由 c2ToolRegistrar 注册 MCP 工具）
+	h.mu.RLock()
+	c2Rt := h.c2Runtime
+	h.mu.RUnlock()
+	if c2Rt != nil {
+		if err := c2Rt.ReconcileC2AfterConfigApply(); err != nil {
+			h.logger.Error("C2 配置应用失败", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "C2 启动失败: " + err.Error()})
+			return
+		}
+	}
+
 	// 现在获取写锁，执行快速的操作
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -1041,6 +1086,16 @@ func (h *ConfigHandler) ApplyConfig(c *gin.Context) {
 			h.logger.Error("重新注册批量任务 MCP 工具失败", zap.Error(err))
 		} else {
 			h.logger.Info("批量任务 MCP 工具已重新注册")
+		}
+	}
+
+	// 重新注册 C2 MCP 工具（仅当 C2 已启动）
+	if h.c2ToolRegistrar != nil {
+		h.logger.Info("重新注册 C2 MCP 工具")
+		if err := h.c2ToolRegistrar(); err != nil {
+			h.logger.Error("重新注册 C2 MCP 工具失败", zap.Error(err))
+		} else {
+			h.logger.Info("C2 MCP 工具已处理")
 		}
 	}
 
@@ -1131,6 +1186,7 @@ func (h *ConfigHandler) saveConfig() error {
 	updateOpenAIConfig(root, h.config.OpenAI)
 	updateFOFAConfig(root, h.config.FOFA)
 	updateKnowledgeConfig(root, h.config.Knowledge)
+	updateC2Config(root, h.config.C2)
 	updateRobotsConfig(root, h.config.Robots)
 	updateHitlConfig(root, h.config.Hitl)
 	updateMultiAgentConfig(root, h.config.MultiAgent)
@@ -1307,6 +1363,12 @@ func updateKnowledgeConfig(doc *yaml.Node, cfg config.KnowledgeConfig) {
 	setIntInMap(indexingNode, "rate_limit_delay_ms", cfg.Indexing.RateLimitDelayMs)
 	setIntInMap(indexingNode, "max_retries", cfg.Indexing.MaxRetries)
 	setIntInMap(indexingNode, "retry_delay_ms", cfg.Indexing.RetryDelayMs)
+}
+
+func updateC2Config(doc *yaml.Node, cfg config.C2Config) {
+	root := doc.Content[0]
+	c2Node := ensureMap(root, "c2")
+	setBoolInMap(c2Node, "enabled", cfg.EnabledEffective())
 }
 
 func mergeHitlToolWhitelistSlice(existing, add []string) []string {
